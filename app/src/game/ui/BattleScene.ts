@@ -52,10 +52,13 @@ type Enemy = {
   atk: number;
   def: number;
   isElite: boolean;
+  kind: "normal" | "elite" | "splitter" | "splitter_small" | "pusher";
   speed: number;
   attackCooldownMs: number;
   hpBarBg: Phaser.GameObjects.Rectangle;
   hpBarFill: Phaser.GameObjects.Rectangle;
+  hpBarW: number;
+  hpBarOffsetY: number;
 };
 
 export class BattleScene extends Phaser.Scene {
@@ -63,18 +66,6 @@ export class BattleScene extends Phaser.Scene {
   private rng = createRng(Date.now());
 
   private playerCircle!: Phaser.GameObjects.Sprite;
-  private heroLayers: Partial<
-    Record<
-      "armor" | "helmet" | "weapon" | "accessory",
-      Phaser.GameObjects.Sprite
-    >
-  > = {};
-  private heroLayerOrder: Array<"armor" | "helmet" | "weapon" | "accessory"> = [
-    "armor",
-    "helmet",
-    "weapon",
-    "accessory",
-  ];
   private playerHp = 1;
   private playerBaseScale = 2;
   private playerHpBarBg!: Phaser.GameObjects.Rectangle;
@@ -85,8 +76,6 @@ export class BattleScene extends Phaser.Scene {
   private playerAnimT = 0;
   private attackAnimMs = 0;
   private heroDir: "down" | "up" | "left" | "right" = "down";
-  private kenneyCharCols = 0;
-  private kenneyHeroFrame = 0;
   private mapW = 0;
   private mapH = 0;
   private laneY = 0;
@@ -95,6 +84,7 @@ export class BattleScene extends Phaser.Scene {
   private enemies: Enemy[] = [];
   private kills = 0;
   private killsNeeded = 0;
+  private spawnedCount = 0;
   private spawnCooldownMs = 0;
   private dashLockMs = 0;
 
@@ -144,15 +134,8 @@ export class BattleScene extends Phaser.Scene {
     this.laneY = heroStartY;
     const heroKey = this.textures.exists("warrior_sheet")
       ? "warrior_sheet"
-      : this.textures.exists("kenney_char")
-      ? "kenney_char"
       : "player";
-    const heroFrame =
-      heroKey === "warrior_sheet"
-        ? 0
-        : heroKey === "kenney_char"
-        ? this.heroFrame("down", 1)
-        : undefined;
+    const heroFrame = heroKey === "warrior_sheet" ? 0 : undefined;
     this.playerCircle = this.add.sprite(
       heroStartX,
       heroStartY,
@@ -164,8 +147,6 @@ export class BattleScene extends Phaser.Scene {
     }
     this.playerCircle.setDepth(10);
     this.playerCircle.setScale(this.playerBaseScale);
-    this.createHeroLayers();
-    this.refreshHeroAppearance();
     this.updateHeroAnim(0, 0);
     this.playerHp = computeDerivedPlayerStats(this.save).hpMax;
     this.createPlayerHpBar();
@@ -259,6 +240,7 @@ export class BattleScene extends Phaser.Scene {
         Array.from({ length: count }, (_, i) => start + i);
       const idle = range(0, 8);
       const run = range(48, 8);
+      const attack1 = range(176, 8);
       const attack2 = range(80, 6);
       const mk = (
         key: string,
@@ -281,55 +263,19 @@ export class BattleScene extends Phaser.Scene {
       mk("hero_run_up", run, 14, -1);
       mk("hero_run_left", run, 14, -1);
       mk("hero_run_right", run, 14, -1);
-      mk("hero_attack", attack2, 12, 0);
+      mk("hero_attack1", attack1, 12, 0);
+      mk("hero_attack2", attack2, 12, 0);
       return;
     }
-    if (!this.textures.exists("kenney_char")) return;
-    if (this.anims.exists("hero_idle_down")) return;
-    const img = this.textures
-      .get("kenney_char")
-      .getSourceImage() as HTMLImageElement;
-    const cols = Math.floor((img.width + 1) / (16 + 1));
-    this.kenneyCharCols = Math.max(1, cols);
-    const rows = Math.floor((img.height + 1) / (16 + 1));
-    this.kenneyHeroFrame = (Math.max(1, rows) - 1) * this.kenneyCharCols;
-    const mk = (
-      key: string,
-      frames: number[],
-      frameRate: number,
-      repeat: number
-    ) => {
-      this.anims.create({
-        key,
-        frames: frames.map((frame) => ({ key: "kenney_char", frame })),
-        frameRate,
-        repeat,
-      });
-    };
-    const f = this.heroFrame("down", 1);
-    mk("hero_idle_down", [f], 1, -1);
-    mk("hero_idle_up", [f], 1, -1);
-    mk("hero_idle_left", [f], 1, -1);
-    mk("hero_idle_right", [f], 1, -1);
-    mk("hero_walk_down", [f], 1, -1);
-    mk("hero_walk_up", [f], 1, -1);
-    mk("hero_walk_left", [f], 1, -1);
-    mk("hero_walk_right", [f], 1, -1);
-  }
-
-  private heroFrame(dir: "down" | "up" | "left" | "right", step: 0 | 1 | 2) {
-    void dir;
-    void step;
-    return Math.max(0, this.kenneyHeroFrame);
   }
 
   private updateHeroAnim(vx: number, vy: number) {
+    if (!this.textures.exists("warrior_sheet")) return;
     if (
-      !this.textures.exists("kenney_char") &&
-      !this.textures.exists("warrior_sheet")
+      this.attackAnimMs > 0 &&
+      (this.anims.exists("hero_attack1") || this.anims.exists("hero_attack2"))
     )
       return;
-    if (this.attackAnimMs > 0 && this.anims.exists("hero_attack")) return;
     const moving = Math.abs(vx) + Math.abs(vy) > 0.001;
     if (moving) {
       if (Math.abs(vx) > Math.abs(vy))
@@ -338,101 +284,8 @@ export class BattleScene extends Phaser.Scene {
     }
     const key = `hero_${moving ? "run" : "idle"}_${this.heroDir}`;
     if (!this.anims.exists(key)) return;
-    const sprites = [
-      this.playerCircle,
-      ...Object.values(this.heroLayers).filter(Boolean),
-    ] as Phaser.GameObjects.Sprite[];
-    for (const s of sprites) {
-      const cur = s.anims.currentAnim?.key;
-      if (cur !== key) s.anims.play(key, true);
-    }
-  }
-  private createHeroLayers() {
-    if (!this.textures.exists("kenney_char")) return;
-    for (const k of this.heroLayerOrder) {
-      if (this.heroLayers[k]) continue;
-      const s = this.add.sprite(
-        this.playerCircle.x,
-        this.playerCircle.y,
-        "kenney_char",
-        this.heroFrame("down", 1)
-      );
-      s.setDepth(
-        this.playerCircle.depth +
-          (k === "armor" ? 1 : k === "helmet" ? 2 : k === "weapon" ? 3 : 4)
-      );
-      s.setScale(this.playerCircle.scaleX, this.playerCircle.scaleY);
-      s.setVisible(false);
-      s.setAlpha(0);
-      this.heroLayers[k] = s;
-    }
-  }
-
-  private refreshHeroAppearance() {
-    if (!this.textures.exists("kenney_char")) return;
-    const toTint = (hex: string) =>
-      Phaser.Display.Color.HexStringToColor(hex).color;
-    const bySlot = this.save.equipment;
-    const armor = bySlot.armor;
-    const helmet = bySlot.helmet;
-    const weapon = bySlot.weapon;
-    const accessory = bySlot.accessory;
-
-    const armorS = this.heroLayers.armor;
-    if (armorS) {
-      if (armor) {
-        armorS.setVisible(true);
-        armorS.setTint(toTint(rarityColor(armor.rarity)));
-        armorS.setAlpha(0.28 + Math.min(0.18, armor.enhanceLevel * 0.03));
-      } else {
-        armorS.setVisible(false);
-      }
-    }
-
-    const helmetS = this.heroLayers.helmet;
-    if (helmetS) {
-      if (helmet) {
-        helmetS.setVisible(true);
-        helmetS.setTint(toTint(rarityColor(helmet.rarity)));
-        helmetS.setAlpha(0.22 + Math.min(0.16, helmet.enhanceLevel * 0.03));
-      } else {
-        helmetS.setVisible(false);
-      }
-    }
-
-    const weaponS = this.heroLayers.weapon;
-    if (weaponS) {
-      if (weapon) {
-        weaponS.setVisible(true);
-        weaponS.setTint(toTint(rarityColor(weapon.rarity)));
-        weaponS.setBlendMode(Phaser.BlendModes.ADD);
-        weaponS.setAlpha(0.18 + Math.min(0.22, weapon.enhanceLevel * 0.04));
-      } else {
-        weaponS.setVisible(false);
-      }
-    }
-
-    const accS = this.heroLayers.accessory;
-    if (accS) {
-      if (accessory) {
-        accS.setVisible(true);
-        accS.setTint(toTint(rarityColor(accessory.rarity)));
-        accS.setBlendMode(Phaser.BlendModes.ADD);
-        accS.setAlpha(0.12 + Math.min(0.18, accessory.enhanceLevel * 0.03));
-      } else {
-        accS.setVisible(false);
-      }
-    }
-
-    this.syncHeroLayersTransform();
-  }
-
-  private syncHeroLayersTransform() {
-    for (const s of Object.values(this.heroLayers)) {
-      if (!s || !s.visible) continue;
-      s.setPosition(this.playerCircle.x, this.playerCircle.y);
-      s.setScale(this.playerCircle.scaleX, this.playerCircle.scaleY);
-    }
+    const cur = this.playerCircle.anims.currentAnim?.key;
+    if (cur !== key) this.playerCircle.anims.play(key, true);
   }
 
   private ensureActorTextures() {
@@ -549,9 +402,8 @@ export class BattleScene extends Phaser.Scene {
 
   private updateEnemyHpBar(e: Enemy) {
     const pct = Phaser.Math.Clamp(e.hpMax <= 0 ? 0 : e.hp / e.hpMax, 0, 1);
-    const barW = e.hpBarBg.width;
-    const offsetY = e.isElite ? 22 : 18;
-    const y = e.sprite.y - offsetY;
+    const barW = e.hpBarW;
+    const y = e.sprite.y - e.hpBarOffsetY;
     e.hpBarBg.setPosition(e.sprite.x, y);
     e.hpBarFill.setPosition(e.sprite.x - barW / 2 + 1, y);
     e.hpBarFill.setScale(pct, 1);
@@ -599,7 +451,6 @@ export class BattleScene extends Phaser.Scene {
       this.playerBaseScale * scaleX,
       this.playerBaseScale * scaleY
     );
-    this.syncHeroLayersTransform();
   }
 
   private updateEnemies(dt: number) {
@@ -631,8 +482,10 @@ export class BattleScene extends Phaser.Scene {
     const living = this.enemies.length;
     const maxLiving = 6 + Math.min(8, Math.floor(stage / 12));
     if (living >= maxLiving) return;
+    if (this.spawnedCount >= this.killsNeeded) return;
 
     this.spawnEnemy();
+    this.spawnedCount += 1;
     this.spawnCooldownMs = Math.max(140, 520 - stage * 1.5);
   }
 
@@ -669,6 +522,13 @@ export class BattleScene extends Phaser.Scene {
       const dmg = damageAfterDefense(raw, derived.def);
       this.playerHp -= dmg;
       this.pushCombatLog(`受伤：${Math.floor(dmg)}`);
+      if (e.kind === "pusher") {
+        const push = 8;
+        const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
+        if (nx !== this.playerCircle.x) {
+          this.playerCircle.setPosition(nx, this.laneY);
+        }
+      }
       this.spawnFloatText(
         this.playerCircle.x,
         this.playerCircle.y - 18,
@@ -887,12 +747,8 @@ export class BattleScene extends Phaser.Scene {
     const destY = this.laneY;
 
     this.dashLockMs = Math.max(this.dashLockMs, 240);
-    const dashTargets = [
-      this.playerCircle,
-      ...Object.values(this.heroLayers).filter(Boolean),
-    ] as Phaser.GameObjects.Sprite[];
     this.tweens.add({
-      targets: dashTargets,
+      targets: this.playerCircle,
       x: destX,
       y: destY,
       duration: 140,
@@ -1074,15 +930,18 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playPlayerAttackAnim(attackIntervalMs?: number) {
-    const sprites = [
-      this.playerCircle,
-      ...Object.values(this.heroLayers).filter(Boolean),
-    ] as Phaser.GameObjects.Sprite[];
-    if (
-      this.textures.exists("warrior_sheet") &&
-      this.anims.exists("hero_attack")
-    ) {
-      const anim = this.anims.get("hero_attack");
+    const hasAttack1 = this.anims.exists("hero_attack1");
+    const hasAttack2 = this.anims.exists("hero_attack2");
+    if (this.textures.exists("warrior_sheet") && (hasAttack1 || hasAttack2)) {
+      const key =
+        hasAttack1 && hasAttack2
+          ? this.rng.next() < 0.5
+            ? "hero_attack1"
+            : "hero_attack2"
+          : hasAttack1
+          ? "hero_attack1"
+          : "hero_attack2";
+      const anim = this.anims.get(key);
       const frames = anim?.frames.length ?? 6;
       if (attackIntervalMs && attackIntervalMs > 0) {
         const desiredDuration = Math.max(120, attackIntervalMs * 0.85);
@@ -1092,9 +951,7 @@ export class BattleScene extends Phaser.Scene {
           30
         );
         this.attackAnimMs = Math.max(this.attackAnimMs, desiredDuration);
-        for (const s of sprites) {
-          s.anims.play({ key: "hero_attack", frameRate, repeat: 0 }, true);
-        }
+        this.playerCircle.anims.play({ key, frameRate, repeat: 0 }, true);
         return;
       }
       const frameRate = anim?.frameRate ?? 12;
@@ -1102,9 +959,7 @@ export class BattleScene extends Phaser.Scene {
         this.attackAnimMs,
         (frames / frameRate) * 1000
       );
-      for (const s of sprites) {
-        s.anims.play("hero_attack", true);
-      }
+      this.playerCircle.anims.play(key, true);
       return;
     }
     const dx = this.heroDir === "left" ? -1 : this.heroDir === "right" ? 1 : 0;
@@ -1173,6 +1028,49 @@ export class BattleScene extends Phaser.Scene {
     this.enemies = this.enemies.filter((e) => e !== enemy);
     this.kills += 1;
 
+    if (enemy.kind === "splitter") {
+      const childHp = Math.max(1, enemy.hpMax * 0.45);
+      const childAtk = enemy.atk * 0.7;
+      const childDef = enemy.def * 0.7;
+      const childSpeed = enemy.speed + 15;
+      const childScale = 0.7;
+      const childBarW = 20;
+      const childOffsetY = 14;
+      const left = this.createEnemy({
+        x: ex - 10,
+        y: ey,
+        kind: "splitter_small",
+        hpMax: childHp,
+        atk: childAtk,
+        def: childDef,
+        speed: childSpeed,
+        scale: childScale,
+        tint: 0x22c55e,
+        barW: childBarW,
+        barColor: 0x22c55e,
+        barOffsetY: childOffsetY,
+        attackCooldownMs: this.rng.int(80, 420),
+      });
+      const right = this.createEnemy({
+        x: ex + 10,
+        y: ey,
+        kind: "splitter_small",
+        hpMax: childHp,
+        atk: childAtk,
+        def: childDef,
+        speed: childSpeed,
+        scale: childScale,
+        tint: 0x22c55e,
+        barW: childBarW,
+        barColor: 0x22c55e,
+        barOffsetY: childOffsetY,
+        attackCooldownMs: this.rng.int(80, 420),
+      });
+      this.enemies.push(left, right);
+      this.updateEnemyHpBar(left);
+      this.updateEnemyHpBar(right);
+    }
+
     const drop = rollKillDrop(this.rng, this.save.stage, this.save.stageRepeat);
     this.save.gold += drop.gold;
     this.save.essence += drop.essence;
@@ -1220,7 +1118,6 @@ export class BattleScene extends Phaser.Scene {
       if (current) this.save.inventory.push(current);
       this.removeFromInventoryById(item.id);
       persistSave(this.save);
-      this.refreshHeroAppearance();
       return item;
     }
     persistSave(this.save);
@@ -1270,24 +1167,107 @@ export class BattleScene extends Phaser.Scene {
     const y = this.laneY;
 
     const stage = this.save.stage;
-    const isElite = this.rng.chance(0.08 + Math.min(0.12, stage * 0.0006));
-    const baseHp = isElite ? 65 : 45;
-    const baseAtk = isElite ? 10 : 7;
-    const baseDef = isElite ? 4 : 2;
+    const eliteChance = 0.08 + Math.min(0.12, stage * 0.0006);
+    let kind: Enemy["kind"] = "normal";
+    if (this.rng.chance(0.16)) kind = "splitter";
+    else if (this.rng.chance(0.1)) kind = "pusher";
+    else if (this.rng.chance(eliteChance)) kind = "elite";
 
-    const hpMax = enemyHpAtStage(stage, baseHp) * (isElite ? 1.7 : 1);
-    const atk = enemyAtkAtStage(stage, baseAtk) * (isElite ? 1.25 : 1);
-    const def = enemyDefAtStage(stage, baseDef);
-    const speed = (isElite ? 70 : 85) + Math.min(55, stage * 0.3);
+    const baseHp = kind === "elite" ? 65 : 45;
+    const baseAtk = kind === "elite" ? 10 : 7;
+    const baseDef = kind === "elite" ? 4 : 2;
+    const hpMaxBase =
+      enemyHpAtStage(stage, baseHp) * (kind === "elite" ? 1.7 : 1);
+    const atkBase =
+      enemyAtkAtStage(stage, baseAtk) * (kind === "elite" ? 1.25 : 1);
+    const defBase = enemyDefAtStage(stage, baseDef);
 
+    let hpMax = hpMaxBase;
+    let atk = atkBase;
+    let def = defBase;
+    let speed = (kind === "elite" ? 70 : 85) + Math.min(55, stage * 0.3);
+    let tint: number | undefined;
+    let barColor = 0x22c55e;
+    let barW = 28;
+    let barOffsetY = 18;
+    let scale = 1;
+
+    if (kind === "elite") {
+      barColor = 0xf43f5e;
+      barW = 34;
+      barOffsetY = 22;
+    } else if (kind === "splitter") {
+      def *= 0.8;
+      tint = 0x22c55e;
+      barColor = 0x22c55e;
+    } else if (kind === "pusher") {
+      atk *= 0.5;
+      def *= 2;
+      tint = 0xf59e0b;
+      barColor = 0xf59e0b;
+      barW = 32;
+      barOffsetY = 20;
+      speed = Math.max(55, speed - 10);
+    }
+
+    const enemy = this.createEnemy({
+      x,
+      y,
+      kind,
+      hpMax,
+      atk,
+      def,
+      speed,
+      scale,
+      tint,
+      barW,
+      barColor,
+      barOffsetY,
+      attackCooldownMs: this.rng.int(80, 420),
+    });
+    this.enemies.push(enemy);
+    this.updateEnemyHpBar(enemy);
+  }
+
+  private createEnemy(params: {
+    x: number;
+    y: number;
+    kind: Enemy["kind"];
+    hpMax: number;
+    atk: number;
+    def: number;
+    speed: number;
+    scale: number;
+    tint?: number;
+    barW: number;
+    barColor: number;
+    barOffsetY: number;
+    attackCooldownMs: number;
+  }): Enemy {
+    const {
+      x,
+      y,
+      kind,
+      hpMax,
+      atk,
+      def,
+      speed,
+      scale,
+      tint,
+      barW,
+      barColor,
+      barOffsetY,
+      attackCooldownMs,
+    } = params;
+    const isElite = kind === "elite";
     const sprite = this.add.sprite(x, y, isElite ? "enemy_elite" : "enemy");
     sprite.setDepth(9);
-    const barW = isElite ? 34 : 28;
+    sprite.setScale(scale);
+    if (tint !== undefined) sprite.setTint(tint);
     const barH = 6;
-    const offsetY = isElite ? 22 : 18;
     const hpBarBg = this.add.rectangle(
       x,
-      y - offsetY,
+      y - barOffsetY,
       barW,
       barH,
       0x0b1220,
@@ -1297,16 +1277,16 @@ export class BattleScene extends Phaser.Scene {
     const hpBarFill = this.add
       .rectangle(
         x - barW / 2 + 1,
-        y - offsetY,
+        y - barOffsetY,
         barW - 2,
         barH - 2,
-        isElite ? 0xf43f5e : 0x22c55e,
+        barColor,
         1
       )
       .setOrigin(0, 0.5);
     hpBarBg.setDepth(20);
     hpBarFill.setDepth(21);
-    const enemy: Enemy = {
+    return {
       id: `${Date.now()}-${Math.floor(this.rng.next() * 1e9)}`,
       sprite,
       hp: hpMax,
@@ -1314,20 +1294,22 @@ export class BattleScene extends Phaser.Scene {
       atk,
       def,
       isElite,
+      kind,
       speed,
-      attackCooldownMs: this.rng.int(80, 420),
+      attackCooldownMs,
       hpBarBg,
       hpBarFill,
+      hpBarW: barW,
+      hpBarOffsetY: barOffsetY,
     };
-    this.enemies.push(enemy);
-    this.updateEnemyHpBar(enemy);
   }
 
   private startStage() {
     this.clearOverlay();
 
     this.kills = 0;
-    this.killsNeeded = 10 + this.save.stage * 2;
+    this.killsNeeded = 10 + this.save.stage;
+    this.spawnedCount = 0;
     this.spawnCooldownMs = 0;
     this.enemies.forEach((e) => {
       e.sprite.destroy();
@@ -1349,10 +1331,8 @@ export class BattleScene extends Phaser.Scene {
       this.playerCircle.setPosition(this.heroStartX, this.laneY);
       this.playerCircle.setScale(this.playerBaseScale);
       this.updateHeroAnim(0, 0);
-      this.syncHeroLayersTransform();
     }
     persistSave(this.save);
-    this.refreshHeroAppearance();
     this.updatePlayerHpBar();
   }
 
@@ -1710,7 +1690,6 @@ export class BattleScene extends Phaser.Scene {
       if (equipped) this.save.inventory.push(equipped);
       this.trimInventory();
       persistSave(this.save);
-      this.refreshHeroAppearance();
       selectedId = item.id;
       selectedSource = "equip";
       refresh();
@@ -1727,7 +1706,6 @@ export class BattleScene extends Phaser.Scene {
       this.save.essence -= cost.essence;
       applyEnhance(item);
       persistSave(this.save);
-      this.refreshHeroAppearance();
       refresh();
     });
 
@@ -1744,7 +1722,6 @@ export class BattleScene extends Phaser.Scene {
       this.save.reforgeStone -= cost.reforgeStone;
       applyReforge(this.rng, item);
       persistSave(this.save);
-      this.refreshHeroAppearance();
       refresh();
     });
 

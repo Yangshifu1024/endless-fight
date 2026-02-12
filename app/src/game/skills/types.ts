@@ -19,4 +19,3 @@ export interface SkillDef {
   branches: SkillBranchDef[]
   baseCooldownMs?: number
 }
-

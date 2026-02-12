@@ -18,7 +18,7 @@ export function ultimateSkills(): UltimateSkillId[] {
 }
 
 export function passiveSkills(): PassiveSkillId[] {
-  return allSkills().filter((id) => getSkillDef(id).type === 'passive') as PassiveSkillId[]
+  return [] as PassiveSkillId[]
 }
 
 export function skillLevel(save: PlayerSave, id: SkillId) {
@@ -42,17 +42,11 @@ export function canSelectBranch(save: PlayerSave, id: SkillId) {
   return skillLevel(save, id) >= def.branchUnlockLevel
 }
 
-export function passiveBonuses(save: PlayerSave) {
-  const sharpenLv = skillLevel(save, 'sharpen')
-  const vitalityLv = skillLevel(save, 'vitality')
-  const precisionLv = skillLevel(save, 'precision')
-  const thornsLv = skillLevel(save, 'thorns')
-
-  const atkPct = sharpenLv * 0.03
-  const hpPct = vitalityLv * 0.05
-  const critChance = precisionLv * 0.01
-  const thornsPct = thornsLv * 0.01
-
+export function passiveBonuses(_save: PlayerSave) {
+  const atkPct = 0
+  const hpPct = 0
+  const critChance = 0
+  const thornsPct = 0
   return { atkPct, hpPct, critChance, thornsPct }
 }
 

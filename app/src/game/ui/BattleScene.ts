@@ -7,30 +7,16 @@ import {
 } from "../logic/balance";
 import { rollKillDrop } from "../logic/drops";
 import {
-  applyEnhance,
-  applyReforge,
-  canEnhance,
-  enhanceCost,
-  formatItemShort,
-  formatStatsLines,
-  rarityColor,
-  rarityRank,
-  reforgeCost,
-} from "../logic/equipment";
-import { computeDerivedPlayerStats } from "../logic/playerStats";
+  computeDerivedPlayerStats,
+  calcSingleGold,
+  calcPeakGold,
+} from "../logic/playerStats";
 import { applyExp, requiredExpForNextLevel } from "../logic/progression";
 import { createRng } from "../logic/rng";
-import type {
-  ActiveSkillId,
-  EquipmentItem,
-  PlayerSave,
-  SkillId,
-  UltimateSkillId,
-} from "../model/types";
+import type { ActiveSkillId, PlayerSave, SkillId } from "../model/types";
 import {
   allSkills,
   canLearnOrUpgrade,
-  canSelectBranch,
   getSkillDef,
   skillBranch,
   skillLevel,
@@ -40,6 +26,9 @@ import {
   skillCooldownMs,
   skillPreviewLines,
   whirlwindParams,
+  thunderParams,
+  berserkParams,
+  shieldWallParams,
 } from "../skills/effects";
 import { loadSave, persistSave, resetSave } from "../storage/save";
 
@@ -51,13 +40,21 @@ type Enemy = {
   atk: number;
   def: number;
   isElite: boolean;
-  kind: "normal" | "elite" | "splitter" | "splitter_small" | "pusher";
+  kind:
+    | "normal"
+    | "elite"
+    | "splitter"
+    | "splitter_small"
+    | "pusher"
+    | "pusher_elite";
   speed: number;
   attackCooldownMs: number;
   hpBarBg: Phaser.GameObjects.Rectangle;
   hpBarFill: Phaser.GameObjects.Rectangle;
   hpBarW: number;
   hpBarOffsetY: number;
+  expelled?: boolean;
+  expelledMs?: number;
 };
 
 export class BattleScene extends Phaser.Scene {
@@ -70,7 +67,7 @@ export class BattleScene extends Phaser.Scene {
   private playerHpBarBg!: Phaser.GameObjects.Rectangle;
   private playerHpBarFill!: Phaser.GameObjects.Rectangle;
   private playerAttackCdMs = 0;
-  private activeCooldownMs = [0, 0, 0];
+  private activeCooldownMs = [0, 0, 0, 0, 0];
   private playerAnimT = 0;
   private attackAnimMs = 0;
   private heroDir: "down" | "up" | "left" | "right" = "down";
@@ -89,10 +86,38 @@ export class BattleScene extends Phaser.Scene {
   private uiLeft!: Phaser.GameObjects.Text;
   private uiRight!: Phaser.GameObjects.Text;
   private uiBottom!: Phaser.GameObjects.Text;
+  private uiTop!: Phaser.GameObjects.Text;
+  private uiBottomFight!: Phaser.GameObjects.Text;
+  private uiBottomSkill!: Phaser.GameObjects.Text;
+  private uiBottomDefense!: Phaser.GameObjects.Text;
+  private layoutBottomLogs() {
+    const { width, height } = this.scale;
+    const totalW = Math.floor(width * 0.5);
+    const gap = 8;
+    const colW = Math.max(80, Math.floor((totalW - gap * 2) / 3));
+    const x0 = 12;
+    const y = height - 12;
+    this.uiBottomFight.setPosition(x0, y).setOrigin(0, 1);
+    this.uiBottomSkill.setPosition(x0 + colW + gap, y).setOrigin(0, 1);
+    this.uiBottomDefense.setPosition(x0 + (colW + gap) * 2, y).setOrigin(0, 1);
+    this.uiBottomFight.setStyle({ wordWrap: { width: colW }, align: "left" });
+    this.uiBottomSkill.setStyle({ wordWrap: { width: colW }, align: "left" });
+    this.uiBottomDefense.setStyle({ wordWrap: { width: colW }, align: "left" });
+  }
   private uiButtons: Phaser.GameObjects.Text[] = [];
+  private refreshButtons() {
+    for (const t of this.uiButtons) t.destroy();
+    this.uiButtons = [];
+    this.createButtons();
+  }
   private overlay: Phaser.GameObjects.Container | undefined;
   private lastDropText = "";
   private combatLog: string[] = [];
+  private defenseLog: string[] = [];
+  private skillLog: string[] = [];
+  private recoveryTickerMs = 0;
+  private stageAtkSpeedMult = 1;
+  private stageCritBonus = 0;
 
   private keys!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
@@ -146,7 +171,7 @@ export class BattleScene extends Phaser.Scene {
     this.playerCircle.setDepth(10);
     this.playerCircle.setScale(this.playerBaseScale);
     this.updateHeroAnim(0, 0);
-    this.playerHp = computeDerivedPlayerStats(this.save).hpMax;
+    this.playerHp = this.getDerived().hpMax;
     this.createPlayerHpBar();
 
     this.uiLeft = this.add.text(12, 10, "", {
@@ -172,6 +197,43 @@ export class BattleScene extends Phaser.Scene {
     this.pinToScreen(this.uiLeft);
     this.pinToScreen(this.uiRight);
     this.pinToScreen(this.uiBottom);
+    this.uiBottomFight = this.add
+      .text(12, height - 12, "", {
+        fontFamily: "system-ui",
+        fontSize: "13px",
+        color: "#94a3b8",
+        align: "left",
+      })
+      .setOrigin(0, 1);
+    this.uiBottomSkill = this.add
+      .text(width * 0.5, height - 12, "", {
+        fontFamily: "system-ui",
+        fontSize: "13px",
+        color: "#94a3b8",
+        align: "center",
+      })
+      .setOrigin(0.5, 1);
+    this.uiBottomDefense = this.add
+      .text(width - 12, height - 12, "", {
+        fontFamily: "system-ui",
+        fontSize: "13px",
+        color: "#94a3b8",
+        align: "right",
+      })
+      .setOrigin(1, 1);
+    this.pinToScreen(this.uiBottomFight);
+    this.pinToScreen(this.uiBottomSkill);
+    this.pinToScreen(this.uiBottomDefense);
+    this.layoutBottomLogs();
+    this.uiTop = this.add
+      .text(width * 0.5, 6, "", {
+        fontFamily: "system-ui",
+        fontSize: "13px",
+        color: "#ffffff",
+        align: "center",
+      })
+      .setOrigin(0.5, 0);
+    this.pinToScreen(this.uiTop);
 
     this.createButtons();
     this.startStage();
@@ -194,8 +256,17 @@ export class BattleScene extends Phaser.Scene {
 
   private pushCombatLog(msg: string) {
     this.combatLog.unshift(msg);
-    if (this.combatLog.length > 2000)
-      this.combatLog = this.combatLog.slice(0, 2000);
+    if (this.combatLog.length > 10)
+      this.combatLog = this.combatLog.slice(0, 10);
+  }
+  private pushDefenseLog(msg: string) {
+    this.defenseLog.unshift(msg);
+    if (this.defenseLog.length > 10)
+      this.defenseLog = this.defenseLog.slice(0, 10);
+  }
+  private pushSkillLog(msg: string) {
+    this.skillLog.unshift(msg);
+    if (this.skillLog.length > 10) this.skillLog = this.skillLog.slice(0, 10);
   }
 
   private createKenneyMap() {
@@ -383,7 +454,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updatePlayerHpBar() {
     if (!this.playerHpBarBg || !this.playerHpBarFill) return;
-    const derived = computeDerivedPlayerStats(this.save);
+    const derived = this.getDerived();
     const pct = Phaser.Math.Clamp(
       derived.hpMax <= 0 ? 0 : this.playerHp / derived.hpMax,
       0,
@@ -432,17 +503,17 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const { width } = this.scale;
-    const boundW =
-      this.mapW > 0 ? Math.min(this.mapW, width * 0.5) : width * 0.5;
+    const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
     const nextX = this.playerCircle.x + vx * speed * (dt / 1000);
     const nx = Phaser.Math.Clamp(nextX, pad, boundW - pad);
-    const hitMidline = nextX >= boundW - pad && vx > 0;
     this.playerCircle.setPosition(nx, this.laneY);
-    this.updateHeroAnim(hitMidline ? 0 : vx, 0);
+    this.updateHeroAnim(vx, 0);
     this.playerAnimT += dt;
     if (this.attackAnimMs <= 0) {
-      this.playerCircle.setScale(this.playerBaseScale);
+      const targetScale =
+        this.berserkMs > 0 ? this.playerBaseScale * 1.5 : this.playerBaseScale;
+      this.playerCircle.setScale(targetScale);
     }
   }
 
@@ -450,6 +521,25 @@ export class BattleScene extends Phaser.Scene {
     if (this.overlay) return;
 
     for (const e of this.enemies) {
+      if (e.expelled) {
+        // 暂时退出战斗：隐藏血条与单位，计时后回归
+        e.expelledMs = Math.max(0, (e.expelledMs ?? 0) - dt);
+        if (e.expelledMs <= 0) {
+          // 回归战斗：在右侧边缘附近重现，保留原生命值
+          const rightEdge =
+            this.cameras.main.scrollX + this.cameras.main.width - 30;
+          e.sprite.x = rightEdge;
+          e.sprite.y = this.laneY;
+          e.sprite.setAlpha(1);
+          e.hpBarBg.setAlpha(1);
+          e.hpBarFill.setAlpha(1);
+          e.attackCooldownMs = this.rng.int(300, 800);
+          e.expelled = false;
+          e.expelledMs = undefined;
+          this.updateEnemyHpBar(e);
+        }
+        continue;
+      }
       const step = e.speed * (dt / 1000);
       const dx = this.playerCircle.x - e.sprite.x;
       const stopDist = 24;
@@ -489,7 +579,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const derived = computeDerivedPlayerStats(this.save);
+    const derived = this.getDerived();
     this.playerAttackCdMs = Math.max(0, this.playerAttackCdMs - dt);
     this.updateSkillCasting(dt, derived);
     if (this.kills >= this.killsNeeded) {
@@ -510,43 +600,84 @@ export class BattleScene extends Phaser.Scene {
       const dist = Math.abs(e.sprite.x - this.playerCircle.x);
       if (dist > 26) continue;
       if (e.attackCooldownMs > 0) continue;
-      e.attackCooldownMs = 820;
-      const raw = e.atk;
-      const dmg = damageAfterDefense(raw, derived.def);
+      const earlyCdBoost =
+        this.save.stage <= 5 ? 400 - (this.save.stage - 1) * 60 : 0;
+      e.attackCooldownMs = 820 + Math.max(0, earlyCdBoost);
+      let dmg: number;
+      if (e.kind === "pusher" || e.kind === "pusher_elite") {
+        dmg = Math.ceil(e.atk * 1.5);
+      } else {
+        const raw = e.atk;
+        dmg = damageAfterDefense(raw, derived.def);
+      }
+      let blocked = false;
+      const effectiveThorns = this.shieldWallMs > 0 ? 1 : derived.thornsPct;
+      if (effectiveThorns > 0 && this.rng.next() < effectiveThorns) {
+        dmg = Math.ceil(dmg * 0.5);
+        blocked = true;
+        const shield = this.add.circle(
+          this.playerCircle.x,
+          this.playerCircle.y,
+          26,
+          0x93c5fd,
+          0.18
+        );
+        this.tweens.add({
+          targets: shield,
+          scale: 1.25,
+          alpha: 0,
+          duration: 220,
+          ease: "Cubic.easeOut",
+          onComplete: () => shield.destroy(),
+        });
+        if (e.hp > 0) {
+          const reflect = Math.ceil(e.atk);
+          e.hp -= reflect;
+          this.flashEnemy(e);
+          this.spawnFloatText(
+            e.sprite.x,
+            e.sprite.y - 18,
+            `↩${reflect}`,
+            "#fbbf24"
+          );
+          if (e.hp <= 0) this.killEnemy(e);
+        }
+      }
       this.playerHp -= dmg;
-      this.pushCombatLog(`受伤：${Math.floor(dmg)}`);
-      if (e.kind === "pusher") {
-        const push = 8;
+      this.pushDefenseLog(
+        `受伤：${Math.floor(dmg)}${blocked ? "（格挡）" : ""}`
+      );
+      if (e.kind === "pusher" || e.kind === "pusher_elite") {
+        const push = e.kind === "pusher_elite" ? 20 : 8;
         const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
         if (nx !== this.playerCircle.x) {
           this.playerCircle.setPosition(nx, this.laneY);
         }
+        // 蓄力视觉
+        const trail = this.add.rectangle(
+          e.sprite.x,
+          e.sprite.y,
+          e.kind === "pusher_elite" ? 28 : 20,
+          4,
+          0xf59e0b,
+          0.6
+        );
+        trail.setOrigin(0.5, 0.5);
+        this.tweens.add({
+          targets: trail,
+          x: trail.x - (e.kind === "pusher_elite" ? 80 : 40),
+          alpha: 0,
+          duration: e.kind === "pusher_elite" ? 380 : 220,
+          onComplete: () => trail.destroy(),
+        });
       }
       this.spawnFloatText(
         this.playerCircle.x,
         this.playerCircle.y - 18,
         `-${Math.floor(dmg)}`,
-        "#fca5a5"
+        blocked ? "#93c5fd" : "#fca5a5"
       );
-      if (derived.thornsPct > 0 && dmg > 0.01 && e.hp > 0) {
-        const reflectRaw = dmg * derived.thornsPct;
-        const reflect = damageAfterDefense(reflectRaw, e.def);
-        if (reflect > 0.01) {
-          e.hp -= reflect;
-          this.spawnFloatText(
-            e.sprite.x,
-            e.sprite.y - 16,
-            `↩${Math.floor(reflect)}`,
-            "#c4b5fd"
-          );
-          this.pushCombatLog(
-            `荆棘反弹：${Math.floor(reflect)}（${(
-              derived.thornsPct * 100
-            ).toFixed(1)}%）`
-          );
-          if (e.hp <= 0) this.killEnemy(e);
-        }
-      }
+      // 触发型荆棘：不再反伤，仅格挡减伤
       if (this.kills >= this.killsNeeded) {
         this.openStageClearOverlay();
         return;
@@ -602,6 +733,35 @@ export class BattleScene extends Phaser.Scene {
     dt: number,
     derived: ReturnType<typeof computeDerivedPlayerStats>
   ) {
+    const wasBerserk = this.berserkMs > 0;
+    this.berserkMs = Math.max(0, this.berserkMs - dt);
+    if (wasBerserk && this.berserkMs <= 0) {
+      this.berserkLifeStealBonusPct = 0;
+      this.playerCircle.setScale(this.playerBaseScale);
+      if (this.berserkPulse) {
+        this.berserkPulse.remove(false);
+        this.berserkPulse = undefined;
+      }
+    }
+    this.shieldWallMs = Math.max(0, this.shieldWallMs - dt);
+    // 恢复（每秒触发一次，比例为总恢复/10）
+    if (derived.recoveryPct > 0 && this.playerHp > 0) {
+      this.recoveryTickerMs += dt;
+      if (this.recoveryTickerMs >= 1000) {
+        const perSecondPct = derived.recoveryPct / 10;
+        const heal = Math.ceil(derived.hpMax * perSecondPct);
+        if (heal > 0) {
+          this.playerHp = Math.min(derived.hpMax, this.playerHp + heal);
+          this.spawnFloatText(
+            this.playerCircle.x,
+            this.playerCircle.y - 24,
+            `恢复 +${heal}`,
+            "#86efac"
+          );
+        }
+        this.recoveryTickerMs = 0;
+      }
+    }
     for (let i = 0; i < this.activeCooldownMs.length; i++) {
       this.activeCooldownMs[i] = Math.max(0, this.activeCooldownMs[i] - dt);
       const id = this.save.skills.equippedActives[i];
@@ -610,6 +770,17 @@ export class BattleScene extends Phaser.Scene {
       if (lv <= 0) continue;
       if (this.activeCooldownMs[i] > 0) continue;
       if (this.enemies.length <= 0) break;
+      // 近战范围判断
+      let inMelee = false;
+      const meleeRange = 26;
+      for (const e of this.enemies) {
+        const dist = Math.abs(e.sprite.x - this.playerCircle.x);
+        if (dist <= meleeRange) {
+          inMelee = true;
+          break;
+        }
+      }
+      if (!inMelee) continue;
       this.castActiveSkill(id, lv, derived);
       this.activeCooldownMs[i] = skillCooldownMs(id, lv);
     }
@@ -626,6 +797,15 @@ export class BattleScene extends Phaser.Scene {
         break;
       case "charge":
         this.castChargeSkill(lv, derived);
+        break;
+      case "thunder":
+        this.castThunderSkill(lv, derived);
+        break;
+      case "berserk":
+        this.castBerserkSkill(lv);
+        break;
+      case "shield_wall":
+        this.castShieldWallSkill(lv);
         break;
     }
   }
@@ -655,7 +835,6 @@ export class BattleScene extends Phaser.Scene {
         { key: "hero_attack3", frameRate: 18 },
         true
       );
-      this.playerCircle.setScale(this.playerBaseScale * 1.4);
       this.playerCircle.setTint(0x60a5fa);
       this.time.delayedCall(duration, () => {
         if (this.playerCircle && this.playerCircle.active) {
@@ -692,18 +871,220 @@ export class BattleScene extends Phaser.Scene {
       );
       this.applyLifeSteal(derived, dmg * 0.35, "旋风斩");
     }
-    this.pushCombatLog(`旋风斩：命中${hit.length} 伤害${Math.floor(total)}`);
+    this.pushSkillLog(`旋风斩：命中${hit.length} 伤害${Math.floor(total)}`);
     for (const e of [...hit]) {
       if (e.hp <= 0) this.killEnemy(e);
     }
   }
 
+  private berserkMs = 0;
+  private berserkLifeStealBonusPct = 0;
+  private berserkPulse?: Phaser.Time.TimerEvent;
+  private shieldWallMs = 0;
+  private castBerserkSkill(lv: number) {
+    const { durationMs, lifeStealBonusPct } = berserkParams(lv);
+    this.berserkMs = Math.max(this.berserkMs, durationMs);
+    this.berserkLifeStealBonusPct = lifeStealBonusPct;
+    this.playerCircle.setScale(this.playerBaseScale * 1.5);
+    if (this.berserkPulse) {
+      this.berserkPulse.remove(false);
+      this.berserkPulse = undefined;
+    }
+    this.berserkPulse = this.time.addEvent({
+      delay: 280,
+      loop: true,
+      callback: () => {
+        const halo = this.add.circle(
+          this.playerCircle.x,
+          this.playerCircle.y,
+          34,
+          0xef4444,
+          0.22
+        );
+        this.tweens.add({
+          targets: halo,
+          scale: 1.22,
+          alpha: 0,
+          duration: 240,
+          ease: "Cubic.easeOut",
+          onComplete: () => halo.destroy(),
+        });
+      },
+    });
+    this.pushSkillLog(
+      `狂暴：持续${(durationMs / 1000).toFixed(1)}s 吸血+${(
+        lifeStealBonusPct * 100
+      ).toFixed(1)}%`
+    );
+  }
+  private castShieldWallSkill(lv: number) {
+    const { durationMs } = shieldWallParams(lv);
+    this.shieldWallMs = Math.max(this.shieldWallMs, durationMs);
+    const ring = this.add.circle(
+      this.playerCircle.x,
+      this.playerCircle.y,
+      36,
+      0x93c5fd,
+      0.2
+    );
+    this.tweens.add({
+      targets: ring,
+      scale: 1.25,
+      alpha: 0,
+      duration: 300,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+    this.pushSkillLog(`盾墙：持续${(durationMs / 1000).toFixed(1)}s 荆棘=100%`);
+  }
+  private castThunderSkill(
+    lv: number,
+    derived: ReturnType<typeof computeDerivedPlayerStats>
+  ) {
+    const p = thunderParams(lv);
+    const raw = derived.atk * p.coef;
+    const hit: Enemy[] = [];
+    for (const e of this.enemies) {
+      const d = Phaser.Math.Distance.Between(
+        e.sprite.x,
+        e.sprite.y,
+        this.playerCircle.x,
+        this.playerCircle.y
+      );
+      if (d <= p.radius) hit.push(e);
+    }
+    if (hit.length <= 0) return;
+    const cam = this.cameras.main;
+    cam.flash(140, 255, 255, 190);
+    cam.shake(180, 0.006);
+    const ring = this.add.circle(
+      this.playerCircle.x,
+      this.playerCircle.y,
+      p.radius,
+      0xfbbf24,
+      0.16
+    );
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      duration: 240,
+      onComplete: () => ring.destroy(),
+    });
+    const ring2 = this.add.circle(
+      this.playerCircle.x,
+      this.playerCircle.y,
+      p.radius * 0.6,
+      0xfff7ad,
+      0.22
+    );
+    this.tweens.add({
+      targets: ring2,
+      scale: 1.25,
+      alpha: 0,
+      duration: 280,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring2.destroy(),
+    });
+    const bolts = this.add.graphics({ x: 0, y: 0 });
+    bolts.setDepth(50);
+    for (let i = 0; i < 9; i++) {
+      const a = this.rng.next() * Math.PI * 2;
+      const len = p.radius * (0.7 + 0.3 * this.rng.next());
+      const seg = 4 + Math.floor(this.rng.next() * 3);
+      const jitter = 10;
+      let sx = this.playerCircle.x;
+      let sy = this.playerCircle.y;
+      bolts.lineStyle(2, 0xfbbf24, 0.95);
+      bolts.beginPath();
+      bolts.moveTo(sx, sy);
+      for (let k = 1; k <= seg; k++) {
+        const t = k / seg;
+        const tx =
+          this.playerCircle.x +
+          Math.cos(a) * len * t +
+          (this.rng.next() - 0.5) * jitter;
+        const ty =
+          this.playerCircle.y +
+          Math.sin(a) * len * t +
+          (this.rng.next() - 0.5) * jitter;
+        bolts.lineTo(tx, ty);
+        sx = tx;
+        sy = ty;
+      }
+      bolts.strokePath();
+      bolts.lineStyle(4, 0xfff7ad, 0.35);
+      bolts.beginPath();
+      bolts.moveTo(this.playerCircle.x, this.playerCircle.y);
+      sx = this.playerCircle.x;
+      sy = this.playerCircle.y;
+      for (let k = 1; k <= seg; k++) {
+        const t = k / seg;
+        const tx =
+          this.playerCircle.x +
+          Math.cos(a) * len * t +
+          (this.rng.next() - 0.5) * jitter * 0.6;
+        const ty =
+          this.playerCircle.y +
+          Math.sin(a) * len * t +
+          (this.rng.next() - 0.5) * jitter * 0.6;
+        bolts.lineTo(tx, ty);
+        sx = tx;
+        sy = ty;
+      }
+      bolts.strokePath();
+    }
+    this.tweens.add({
+      targets: bolts,
+      alpha: 0,
+      duration: 220,
+      ease: "Quadratic.Out",
+      onComplete: () => bolts.destroy(),
+    });
+    let total = 0;
+    for (const e of hit) {
+      const dmg = damageAfterDefense(raw, e.def);
+      e.hp -= dmg;
+      total += dmg;
+      this.flashEnemy(e);
+      const mark = this.add.graphics();
+      mark.lineStyle(3, 0xf59e0b, 0.9);
+      const mx = e.sprite.x;
+      const my = e.sprite.y - 22;
+      mark.beginPath();
+      mark.moveTo(mx - 6, my - 10);
+      mark.lineTo(mx, my);
+      mark.lineTo(mx - 4, my + 10);
+      mark.strokePath();
+      this.tweens.add({
+        targets: mark,
+        alpha: 0,
+        y: my - 6,
+        duration: 260,
+        onComplete: () => mark.destroy(),
+      });
+      this.spawnFloatText(
+        e.sprite.x,
+        e.sprite.y - 16,
+        `${Math.floor(dmg)}`,
+        "#fbbf24"
+      );
+      this.applyLifeSteal(derived, dmg * 0.35, "雷霆一击");
+    }
+    this.pushSkillLog(`雷霆一击：命中${hit.length} 伤害${Math.floor(total)}`);
+    for (const e of [...hit]) {
+      if (e.hp <= 0) this.killEnemy(e);
+    }
+  }
   private castChargeSkill(
     lv: number,
     derived: ReturnType<typeof computeDerivedPlayerStats>
   ) {
     const branch = skillBranch(this.save, "charge");
     const p = chargeParams(lv, branch);
+
+    const cam = this.cameras.main;
+    const resumeFollow = this.mapW > 0 && this.mapH > 0;
+    cam.stopFollow();
 
     const { width } = this.scale;
     const boundW = this.mapW > 0 ? this.mapW : width;
@@ -716,22 +1097,6 @@ export class BattleScene extends Phaser.Scene {
     for (let i = 0; i < this.activeCooldownMs.length; i++) {
       this.activeCooldownMs[i] = Math.max(this.activeCooldownMs[i], 1000);
     }
-
-    const originalScale = this.playerBaseScale;
-    const targetScale = originalScale * p.scale;
-
-    this.tweens.add({
-      targets: this.playerCircle,
-      scale: targetScale,
-      duration: 200,
-      yoyo: true,
-      hold: 600,
-      onComplete: () => {
-        if (this.playerCircle && this.playerCircle.active) {
-          this.playerCircle.setScale(originalScale);
-        }
-      },
-    });
 
     this.tweens.add({
       targets: this.playerCircle,
@@ -747,6 +1112,9 @@ export class BattleScene extends Phaser.Scene {
           ease: "Cubic.easeOut",
           onComplete: () => {
             this.dealChargeDamage(derived, p.coef, "冲撞(回)");
+            if (resumeFollow) {
+              cam.startFollow(this.playerCircle, true, 0.12, 0.12);
+            }
           },
         });
       },
@@ -779,12 +1147,28 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (hit.length > 0) {
-      this.pushCombatLog(
+      this.pushSkillLog(
         `${source}：命中${hit.length} 伤害${Math.floor(total)}`
       );
       this.applyLifeSteal(derived, total * 0.1, source);
       for (const e of hit) {
         if (e.hp <= 0) this.killEnemy(e);
+      }
+      // 推至最右侧堆积（不离场、不眩晕）
+      const rightEdge =
+        this.cameras.main.scrollX + this.cameras.main.width - 24;
+      for (const e of hit) {
+        if (!e.sprite.active) continue;
+        this.tweens.add({
+          targets: e.sprite,
+          x: rightEdge,
+          duration: 360,
+          ease: "Cubic.easeIn",
+          onComplete: () => {
+            // 保持在右侧边缘，立即恢复正常逻辑
+            e.attackCooldownMs = this.rng.int(300, 900);
+          },
+        });
       }
     }
   }
@@ -857,8 +1241,8 @@ export class BattleScene extends Phaser.Scene {
       targets: this.playerCircle,
       x: this.playerCircle.x + dx * 4,
       y: this.playerCircle.y + dy * 4,
-      scaleX: this.playerBaseScale * 1.18,
-      scaleY: this.playerBaseScale * 0.92,
+      scaleX: this.playerCircle.scale * 1.18,
+      scaleY: this.playerCircle.scale * 0.92,
       duration: 80,
       yoyo: true,
       ease: "Quad.easeOut",
@@ -879,20 +1263,24 @@ export class BattleScene extends Phaser.Scene {
     dmgDealt: number,
     source: string
   ) {
-    if (derived.lifeStealPct <= 0) return;
-    const heal = dmgDealt * derived.lifeStealPct;
-    if (heal <= 0.01) return;
+    const pct = Math.max(
+      0,
+      derived.lifeStealPct + (this.berserkLifeStealBonusPct || 0)
+    );
+    if (pct <= 0) return;
+    const heal = Math.ceil(dmgDealt * pct);
+    if (heal <= 0) return;
     const before = this.playerHp;
-    this.playerHp = Math.min(derived.hpMax, this.playerHp + heal);
-    const actual = this.playerHp - before;
-    if (actual <= 0.01) return;
+    const actual = Math.min(heal, Math.max(0, derived.hpMax - before));
+    if (actual <= 0) return;
+    this.playerHp = before + actual;
     this.spawnFloatText(
       this.playerCircle.x,
       this.playerCircle.y - 24,
-      `+${Math.floor(actual)}`,
+      `+${actual}`,
       "#86efac"
     );
-    this.pushCombatLog(`吸血：+${Math.floor(actual)}（${source}）`);
+    this.pushCombatLog(`吸血：+${actual}（${source}）`);
   }
 
   private killEnemy(enemy: Enemy) {
@@ -900,6 +1288,32 @@ export class BattleScene extends Phaser.Scene {
     const ey = enemy.sprite.y;
     enemy.hpBarBg.setDepth(25);
     enemy.hpBarFill.setDepth(26);
+    // 分裂怪死亡爆裂：对玩家造成固定伤害的1.5倍
+    if (enemy.kind === "splitter" || enemy.kind === "splitter_small") {
+      const base = enemy.atk;
+      const boom = Math.ceil(base * 1.5);
+      this.playerHp = Math.max(0, this.playerHp - boom);
+      const flame = this.add.circle(ex, ey, 18, 0xf97316, 0.24);
+      this.tweens.add({
+        targets: flame,
+        scale: 1.8,
+        alpha: 0,
+        duration: 260,
+        ease: "Cubic.easeOut",
+        onComplete: () => flame.destroy(),
+      });
+      this.spawnFloatText(
+        this.playerCircle.x,
+        this.playerCircle.y - 22,
+        `爆裂 -${boom}`,
+        "#fb7185"
+      );
+      this.pushDefenseLog(`爆裂伤害：${boom}`);
+      if (this.playerHp <= 0) {
+        this.openDefeatOverlay();
+        return;
+      }
+    }
     this.tweens.add({
       targets: [enemy.sprite, enemy.hpBarBg, enemy.hpBarFill],
       alpha: 0,
@@ -915,6 +1329,8 @@ export class BattleScene extends Phaser.Scene {
     });
     this.enemies = this.enemies.filter((e) => e !== enemy);
     this.kills += 1;
+    this.stageAtkSpeedMult = Math.min(2, this.stageAtkSpeedMult + 0.2);
+    this.stageCritBonus = Math.min(1, this.stageCritBonus + 0.05);
 
     if (enemy.kind === "splitter") {
       const childHp = Math.max(1, enemy.hpMax * 0.45);
@@ -961,11 +1377,10 @@ export class BattleScene extends Phaser.Scene {
 
     const drop = rollKillDrop(this.rng, this.save.stage, this.save.stageRepeat);
     this.save.gold += drop.gold;
-    this.save.essence += drop.essence;
-    this.save.reforgeStone += drop.reforgeStone;
     const res = applyExp(this.save.level, this.save.exp, drop.exp);
     this.save.level = res.level;
     this.save.exp = res.exp;
+    this.lastDropText = `金币 +${drop.gold}，EXP +${drop.exp}`;
     if (res.leveledUp > 0) {
       this.save.skills.points += res.leveledUp;
       const msg = `升级：技能点 +${res.leveledUp}`;
@@ -974,77 +1389,9 @@ export class BattleScene extends Phaser.Scene {
         : msg;
     }
 
-    if (drop.equipment) {
-      const looted = drop.equipment;
-      this.save.inventory.push(looted);
-      const equipped = this.tryAutoEquip(looted);
-      this.trimInventory();
-      const label = formatItemShort(equipped ?? looted);
-      const dropText = `掉落：${label}${
-        drop.reforgeStone ? "，重铸石 +1" : ""
-      }`;
-      this.lastDropText = this.lastDropText
-        ? `${dropText}；${this.lastDropText}`
-        : dropText;
-      this.spawnFloatText(
-        ex,
-        ey - 20,
-        label,
-        rarityColor((equipped ?? looted).rarity)
-      );
-    }
-
     if (this.kills >= this.killsNeeded) {
       this.openStageClearOverlay();
     }
-  }
-
-  private tryAutoEquip(item: EquipmentItem) {
-    const current = this.save.equipment[item.slot];
-    if (!current || item.power > current.power * 1.02) {
-      this.save.equipment[item.slot] = item;
-      if (current) this.save.inventory.push(current);
-      this.removeFromInventoryById(item.id);
-      persistSave(this.save);
-      return item;
-    }
-    persistSave(this.save);
-    return undefined;
-  }
-
-  private removeFromInventoryById(id: string) {
-    const idx = this.save.inventory.findIndex((it) => it.id === id);
-    if (idx >= 0) this.save.inventory.splice(idx, 1);
-  }
-
-  private trimInventory() {
-    const cap = 80;
-    while (this.save.inventory.length > cap) {
-      let minIndex = 0;
-      let minPower = this.save.inventory[0]!.power;
-      for (let i = 1; i < this.save.inventory.length; i++) {
-        const p = this.save.inventory[i]!.power;
-        if (p < minPower) {
-          minPower = p;
-          minIndex = i;
-        }
-      }
-      const sold = this.save.inventory.splice(minIndex, 1)[0]!;
-      const { gold, essence } = this.sellValue(sold);
-      this.save.gold += gold;
-      this.save.essence += essence;
-    }
-  }
-
-  private sellValue(item: EquipmentItem) {
-    const gold = Math.max(
-      1,
-      Math.floor(
-        item.power * 0.12 + item.iLv * 3 + rarityRank(item.rarity) * 14
-      )
-    );
-    const essence = 1 + rarityRank(item.rarity);
-    return { gold, essence };
   }
 
   private spawnEnemy() {
@@ -1057,18 +1404,17 @@ export class BattleScene extends Phaser.Scene {
     const stage = this.save.stage;
     const eliteChance = 0.08 + Math.min(0.12, stage * 0.0006);
     let kind: Enemy["kind"] = "normal";
-    if (this.rng.chance(0.16)) kind = "splitter";
-    else if (this.rng.chance(0.1)) kind = "pusher";
-    else if (this.rng.chance(eliteChance)) kind = "elite";
+    if (this.rng.chance(0.16)) {
+      kind = "splitter";
+    } else if (this.rng.chance(0.2)) {
+      kind = this.rng.chance(eliteChance) ? "pusher_elite" : "pusher";
+    } else if (this.rng.chance(eliteChance)) {
+      kind = "elite";
+    }
 
-    const baseHp = kind === "elite" ? 65 : 45;
-    const baseAtk = kind === "elite" ? 10 : 7;
-    const baseDef = kind === "elite" ? 4 : 2;
-    const hpMaxBase =
-      enemyHpAtStage(stage, baseHp) * (kind === "elite" ? 1.7 : 1);
-    const atkBase =
-      enemyAtkAtStage(stage, baseAtk) * (kind === "elite" ? 1.25 : 1);
-    const defBase = enemyDefAtStage(stage, baseDef);
+    const hpMaxBase = enemyHpAtStage(stage) * (kind === "elite" ? 1.8 : 1);
+    const atkBase = enemyAtkAtStage(stage);
+    const defBase = enemyDefAtStage(stage) * (kind === "elite" ? 1.3 : 1);
 
     let hpMax = hpMaxBase;
     let atk = atkBase;
@@ -1096,6 +1442,14 @@ export class BattleScene extends Phaser.Scene {
       barW = 32;
       barOffsetY = 20;
       speed = Math.max(55, speed - 10);
+    } else if (kind === "pusher_elite") {
+      atk *= 0.6;
+      def *= 2.2;
+      tint = 0xf59e0b;
+      barColor = 0xf59e0b;
+      barW = 36;
+      barOffsetY = 22;
+      speed = Math.max(50, speed - 15);
     }
 
     const enemy = this.createEnemy({
@@ -1196,7 +1550,7 @@ export class BattleScene extends Phaser.Scene {
     this.clearOverlay();
 
     this.kills = 0;
-    this.killsNeeded = 10 + this.save.stage;
+    this.killsNeeded = (10 + this.save.stage) * 2;
     this.spawnedCount = 0;
     this.spawnCooldownMs = 0;
     this.enemies.forEach((e) => {
@@ -1206,14 +1560,24 @@ export class BattleScene extends Phaser.Scene {
     });
     this.enemies = [];
 
-    const derived = computeDerivedPlayerStats(this.save);
+    const derived = this.getDerived();
     this.playerHp = Math.min(derived.hpMax, derived.hpMax);
     this.playerAttackCdMs = 0;
-    this.activeCooldownMs = [900, 1400, 2000];
+    this.activeCooldownMs = [800, 800, 800, 800, 800];
     this.lastDropText = "";
     this.combatLog = [];
     this.attackAnimMs = 0;
     this.dashLockMs = 0;
+    this.recoveryTickerMs = 0;
+    this.stageAtkSpeedMult = 1;
+    this.stageCritBonus = 0;
+    this.berserkMs = 0;
+    this.berserkLifeStealBonusPct = 0;
+    this.shieldWallMs = 0;
+    if (this.berserkPulse) {
+      this.berserkPulse.remove(false);
+      this.berserkPulse = undefined;
+    }
     if (this.playerCircle) {
       this.playerCircle.setPosition(this.heroStartX, this.laneY);
       this.playerCircle.setScale(this.playerBaseScale);
@@ -1221,6 +1585,24 @@ export class BattleScene extends Phaser.Scene {
     }
     persistSave(this.save);
     this.updatePlayerHpBar();
+  }
+
+  private getDerived() {
+    const d = computeDerivedPlayerStats(this.save);
+    const spdMult = Math.max(1, Math.min(2, this.stageAtkSpeedMult));
+    d.attackIntervalMs = Math.max(80, Math.floor(d.attackIntervalMs / spdMult));
+    d.critChance = Math.min(1, d.critChance + Math.max(0, this.stageCritBonus));
+    const cam = this.cameras?.main;
+    if (cam && this.playerCircle) {
+      const mid = cam.scrollX + cam.width * 0.5;
+      const onRight = this.playerCircle.x >= mid;
+      if (onRight) {
+        d.atk = d.atk * 1.5;
+      } else {
+        d.def = d.def * 1.5;
+      }
+    }
+    return d;
   }
 
   private createButtons() {
@@ -1240,18 +1622,95 @@ export class BattleScene extends Phaser.Scene {
       return t;
     };
 
-    mk(12, 190, "下一关", () => this.advanceStage(1));
-    mk(12, 214, "停留刷（衰减）", () => this.repeatStage());
-    mk(12, 238, "背包/装备", () => this.openBackpackOverlay());
-    mk(12, 262, "自动下一关：切换", () => {
-      this.save.autoNext = !this.save.autoNext;
-      persistSave(this.save);
-    });
-    mk(12, 286, "重置存档", () => {
+    {
+      const t = mk(
+        12,
+        190,
+        `自动下一关：${this.save.autoNext ? "开" : "关"}`,
+        () => {
+          this.save.autoNext = !this.save.autoNext;
+          t.setText(`自动下一关：${this.save.autoNext ? "开" : "关"}`);
+          t.setColor(this.save.autoNext ? "#22c55e" : "#ef4444");
+          persistSave(this.save);
+        }
+      );
+      t.setColor(this.save.autoNext ? "#22c55e" : "#ef4444");
+      t.removeAllListeners("pointerover");
+      t.removeAllListeners("pointerout");
+      t.on("pointerover", () =>
+        t.setColor(this.save.autoNext ? "#4ade80" : "#f87171")
+      );
+      t.on("pointerout", () =>
+        t.setColor(this.save.autoNext ? "#22c55e" : "#ef4444")
+      );
+    }
+    {
+      const t = mk(
+        12,
+        214,
+        `自动重开：${this.save.autoRetry ? "开" : "关"}`,
+        () => {
+          this.save.autoRetry = !this.save.autoRetry;
+          t.setText(`自动重开：${this.save.autoRetry ? "开" : "关"}`);
+          t.setColor(this.save.autoRetry ? "#22c55e" : "#ef4444");
+          persistSave(this.save);
+        }
+      );
+      t.setColor(this.save.autoRetry ? "#22c55e" : "#ef4444");
+      t.removeAllListeners("pointerover");
+      t.removeAllListeners("pointerout");
+      t.on("pointerover", () =>
+        t.setColor(this.save.autoRetry ? "#4ade80" : "#f87171")
+      );
+      t.on("pointerout", () =>
+        t.setColor(this.save.autoRetry ? "#22c55e" : "#ef4444")
+      );
+    }
+    {
+      const t = mk(
+        12,
+        238,
+        `显示日志：${this.save.showLogs ? "开" : "关"}`,
+        () => {
+          this.save.showLogs = !this.save.showLogs;
+          t.setText(`显示日志：${this.save.showLogs ? "开" : "关"}`);
+          t.setColor(this.save.showLogs ? "#22c55e" : "#ef4444");
+          persistSave(this.save);
+        }
+      );
+      t.setColor(this.save.showLogs ? "#22c55e" : "#ef4444");
+      t.removeAllListeners("pointerover");
+      t.removeAllListeners("pointerout");
+      t.on("pointerover", () =>
+        t.setColor(this.save.showLogs ? "#4ade80" : "#f87171")
+      );
+      t.on("pointerout", () =>
+        t.setColor(this.save.showLogs ? "#22c55e" : "#ef4444")
+      );
+    }
+    // 右下角：角色、技能下方的重置存档（需确认）
+
+    const { width, height } = this.scale;
+    const roleBtn = mk(width - 12, height - 56, "角色", () =>
+      this.openRoleOverlay()
+    );
+    roleBtn.setOrigin(1, 1);
+    const skillsBtn = mk(width - 12, height - 32, "技能", () =>
+      this.openSkillsOverlay()
+    );
+    skillsBtn.setOrigin(1, 1);
+    const resetBtn = mk(width - 12, height - 8, "重置存档", () => {
+      const ok =
+        typeof window !== "undefined"
+          ? window.confirm("确认重置存档？此操作不可撤销")
+          : true;
+      if (!ok) return;
       resetSave();
       this.save = loadSave();
       this.startStage();
+      this.refreshButtons();
     });
+    resetBtn.setOrigin(1, 1);
   }
 
   private openStageClearOverlay() {
@@ -1393,6 +1852,13 @@ export class BattleScene extends Phaser.Scene {
 
     this.overlay = this.add.container(0, 0, [bg, panel, title, desc, retryBtn]);
     this.pinOverlay();
+
+    if (this.save.autoRetry) {
+      this.time.delayedCall(900, () => {
+        if (!this.overlay) return;
+        this.repeatStage();
+      });
+    }
   }
 
   private clearOverlay() {
@@ -1400,9 +1866,8 @@ export class BattleScene extends Phaser.Scene {
     this.overlay = undefined;
   }
 
-  private openBackpackOverlay() {
+  private openRoleOverlay() {
     if (this.overlay) return;
-
     const { width, height } = this.scale;
     const bg = this.add.rectangle(
       width * 0.5,
@@ -1415,62 +1880,21 @@ export class BattleScene extends Phaser.Scene {
     const panel = this.add.rectangle(
       width * 0.5,
       height * 0.5,
-      860,
-      480,
+      720,
+      360,
       0x0b1220,
       0.98
     );
     panel.setStrokeStyle(1, 0x334155, 1);
-
     const title = this.add
-      .text(
-        width * 0.5,
-        height * 0.5 - 220,
-        `装备背包  ${this.save.inventory.length}/80`,
-        {
-          fontFamily: "system-ui",
-          fontSize: "18px",
-          color: "#e2e8f0",
-        }
-      )
-      .setOrigin(0.5, 0.5);
-
-    const tabEquip = this.add
-      .text(width * 0.5 - 400, height * 0.5 - 220, "装备", {
+      .text(width * 0.5, height * 0.5 - 150, "角色", {
         fontFamily: "system-ui",
-        fontSize: "14px",
-        color: "#93c5fd",
-        backgroundColor: "#1e293b",
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-
-    const tabSkills = this.add
-      .text(width * 0.5 - 330, height * 0.5 - 220, "技能", {
-        fontFamily: "system-ui",
-        fontSize: "14px",
+        fontSize: "18px",
         color: "#e2e8f0",
-        backgroundColor: "#1e293b",
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    tabSkills.on("pointerdown", () => {
-      this.clearOverlay();
-      this.openSkillsOverlay();
-    });
-
-    const money = this.add
-      .text(width * 0.5, height * 0.5 - 192, "", {
-        fontFamily: "system-ui",
-        fontSize: "13px",
-        color: "#94a3b8",
       })
       .setOrigin(0.5, 0.5);
-
     const closeBtn = this.add
-      .text(width * 0.5 + 400, height * 0.5 - 220, "关闭", {
+      .text(width * 0.5 + 350, height * 0.5 - 150, "关闭", {
         fontFamily: "system-ui",
         fontSize: "14px",
         color: "#e2e8f0",
@@ -1480,78 +1904,29 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(1, 0.5)
       .setInteractive({ useHandCursor: true });
     closeBtn.on("pointerdown", () => this.clearOverlay());
-
-    const leftX = width * 0.5 - 390;
-    const topY = height * 0.5 - 160;
-
-    const equipTitle = this.add.text(leftX, topY, "已装备", {
+    const leftX = width * 0.5 - 320;
+    const topY = height * 0.5 - 110;
+    const info = this.add.text(leftX, topY, "", {
       fontFamily: "system-ui",
       fontSize: "14px",
       color: "#e2e8f0",
     });
-
-    const equipLines: Phaser.GameObjects.Text[] = [];
-    const slots: Array<{ key: EquipmentItem["slot"]; label: string }> = [
-      { key: "weapon", label: "武器" },
-      { key: "helmet", label: "头盔" },
-      { key: "armor", label: "护甲" },
-      { key: "gloves", label: "手套" },
-      { key: "boots", label: "靴子" },
-      { key: "accessory", label: "饰品" },
-    ];
-
-    const setEquipLine = (i: number, text: string, color = "#e2e8f0") => {
-      const y = topY + 26 + i * 22;
-      const t =
-        equipLines[i] ??
-        this.add
-          .text(leftX, y, "", {
-            fontFamily: "system-ui",
-            fontSize: "13px",
-            color: "#e2e8f0",
-          })
-          .setInteractive({ useHandCursor: true });
-      t.setText(text);
-      t.setColor(color);
-      equipLines[i] = t;
-      return t;
-    };
-
-    const invX = width * 0.5 - 70;
-    const invTitle = this.add.text(invX, topY, "背包（点击选择）", {
-      fontFamily: "system-ui",
-      fontSize: "14px",
-      color: "#e2e8f0",
-    });
-
-    const invLines: Phaser.GameObjects.Text[] = [];
-    const pageSize = 12;
-    let page = 0;
-    let selectedId: string | undefined;
-    let selectedSource: "inv" | "equip" | undefined;
-
-    const detailX = width * 0.5 + 250;
-    const detailTitle = this.add.text(detailX, topY, "详情", {
-      fontFamily: "system-ui",
-      fontSize: "14px",
-      color: "#e2e8f0",
-    });
-    const detailBody = this.add.text(detailX, topY + 24, "", {
+    const statsText = this.add.text(leftX, topY + 28, "", {
       fontFamily: "system-ui",
       fontSize: "13px",
       color: "#94a3b8",
-      lineSpacing: 4,
-      wordWrap: { width: 320 },
     });
-
-    const btnY = height * 0.5 + 150;
-    const actionInfo = this.add.text(detailX, btnY - 56, "", {
+    const nextStatsText = this.add.text(leftX + 240, topY + 28, "", {
+      fontFamily: "system-ui",
+      fontSize: "13px",
+      color: "#93c5fd",
+    });
+    const costText = this.add.text(leftX, topY + 140, "", {
       fontFamily: "system-ui",
       fontSize: "12px",
       color: "#94a3b8",
-      wordWrap: { width: 320 },
     });
-
+    const btnY = height * 0.5 + 120;
     const mkBtn = (x: number, label: string, onClick: () => void) => {
       const t = this.add
         .text(x, btnY, label, {
@@ -1566,248 +1941,112 @@ export class BattleScene extends Phaser.Scene {
       t.on("pointerdown", onClick);
       return t;
     };
-
-    const equipBtn = mkBtn(detailX, "穿戴/替换", () => {
-      const item = getSelectedItem();
-      if (!item) return;
-      const equipped = this.save.equipment[item.slot];
-      if (selectedSource === "equip") return;
-      this.save.equipment[item.slot] = item;
-      this.removeFromInventoryById(item.id);
-      if (equipped) this.save.inventory.push(equipped);
-      this.trimInventory();
-      persistSave(this.save);
-      selectedId = item.id;
-      selectedSource = "equip";
-      refresh();
-    });
-
-    const enhanceBtn = mkBtn(detailX + 120, "强化", () => {
-      const item = getSelectedItem();
-      if (!item) return;
-      if (!canEnhance(item)) return;
-      const cost = enhanceCost(item);
-      if (this.save.gold < cost.gold || this.save.essence < cost.essence)
-        return;
-      this.save.gold -= cost.gold;
-      this.save.essence -= cost.essence;
-      applyEnhance(item);
+    const enhanceBtn = mkBtn(width * 0.5 + 40, "升级装备等级", () => {
+      const nextLv = (this.save.gearLevel ?? 1) + 1;
+      const cost = calcSingleGold(nextLv);
+      if (this.save.gold < cost) return;
+      this.save.gold -= cost;
+      this.save.totalGoldSpent += cost;
+      this.save.gearLevel = nextLv;
       persistSave(this.save);
       refresh();
     });
-
-    const reforgeBtn = mkBtn(detailX + 190, "重铸", () => {
-      const item = getSelectedItem();
-      if (!item) return;
-      const cost = reforgeCost(item);
-      if (
-        this.save.gold < cost.gold ||
-        this.save.reforgeStone < cost.reforgeStone
-      )
-        return;
-      this.save.gold -= cost.gold;
-      this.save.reforgeStone -= cost.reforgeStone;
-      applyReforge(this.rng, item);
+    const peakBtn = mkBtn(width * 0.5 + 170, "升级巅峰等级", () => {
+      const nextPeak = (this.save.peakTier ?? 0) + 1;
+      const cost = calcPeakGold(nextPeak);
+      if (this.save.gold < cost) return;
+      this.save.gold -= cost;
+      this.save.totalGoldSpent += cost;
+      this.save.peakTier = nextPeak;
       persistSave(this.save);
       refresh();
     });
-
-    const sellBtn = mkBtn(detailX + 260, "出售", () => {
-      const item = getSelectedItem();
-      if (!item) return;
-      if (selectedSource === "equip") return;
-      const { gold, essence } = this.sellValue(item);
-      this.save.gold += gold;
-      this.save.essence += essence;
-      this.removeFromInventoryById(item.id);
-      persistSave(this.save);
-      selectedId = undefined;
-      selectedSource = undefined;
-      refresh();
-    });
-
-    const prevBtn = this.add
-      .text(invX, height * 0.5 + 180, "上一页", {
-        fontFamily: "system-ui",
-        fontSize: "13px",
-        color: "#e2e8f0",
-        backgroundColor: "#1e293b",
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    prevBtn.on("pointerdown", () => {
-      page = Math.max(0, page - 1);
-      refresh();
-    });
-
-    const nextBtn = this.add
-      .text(invX + 80, height * 0.5 + 180, "下一页", {
-        fontFamily: "system-ui",
-        fontSize: "13px",
-        color: "#e2e8f0",
-        backgroundColor: "#1e293b",
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    nextBtn.on("pointerdown", () => {
-      page += 1;
-      refresh();
-    });
-
-    const getSelectedItem = () => {
-      if (!selectedId || !selectedSource) return undefined;
-      if (selectedSource === "inv")
-        return this.save.inventory.find((it) => it.id === selectedId);
-      const all = Object.values(this.save.equipment).filter(
-        Boolean
-      ) as EquipmentItem[];
-      return all.find((it) => it.id === selectedId);
-    };
-
     const refresh = () => {
-      title.setText(`装备背包  ${this.save.inventory.length}/80`);
-      money.setText(
-        `金币 ${Math.floor(this.save.gold)}   精华 ${Math.floor(
-          this.save.essence
-        )}   重铸石 ${Math.floor(this.save.reforgeStone)}`
+      const derived = computeDerivedPlayerStats(this.save);
+      info.setText(
+        `金币 ${Math.floor(this.save.gold)}   装备等级 ${
+          this.save.gearLevel
+        }   巅峰 ${this.save.peakTier}`
       );
-
-      for (let i = 0; i < slots.length; i++) {
-        const slot = slots[i]!;
-        const it = this.save.equipment[slot.key];
-        const label = it
-          ? `${slot.label}：${formatItemShort(it)}`
-          : `${slot.label}：空`;
-        const t = setEquipLine(
-          i,
-          label,
-          it ? rarityColor(it.rarity) : "#94a3b8"
-        );
-        t.removeAllListeners("pointerdown");
-        t.on("pointerdown", () => {
-          if (!it) return;
-          selectedId = it.id;
-          selectedSource = "equip";
-          refresh();
-        });
-      }
-
-      const invSorted = [...this.save.inventory].sort(
-        (a, b) => b.power - a.power
-      );
-      const pageCount = Math.max(1, Math.ceil(invSorted.length / pageSize));
-      page = Phaser.Math.Clamp(page, 0, pageCount - 1);
-      const start = page * pageSize;
-      const slice = invSorted.slice(start, start + pageSize);
-
-      for (let i = 0; i < pageSize; i++) {
-        const y = topY + 26 + i * 20;
-        const it = slice[i];
-        const text = it
-          ? `${start + i + 1}. ${formatItemShort(it)}  强度 ${Math.floor(
-              it.power
-            )}`
-          : "";
-        const line =
-          invLines[i] ??
-          this.add
-            .text(invX, y, "", {
-              fontFamily: "system-ui",
-              fontSize: "12px",
-              color: "#e2e8f0",
-            })
-            .setInteractive({ useHandCursor: true });
-        invLines[i] = line;
-        line.setText(text);
-        line.setColor(it ? rarityColor(it.rarity) : "#e2e8f0");
-        line.setAlpha(
-          it && selectedSource === "inv" && selectedId === it.id
-            ? 1
-            : it
-            ? 0.9
-            : 1
-        );
-        line.removeAllListeners("pointerdown");
-        if (it) {
-          line.on("pointerdown", () => {
-            selectedId = it.id;
-            selectedSource = "inv";
-            refresh();
-          });
-        }
-      }
-
-      const selected = getSelectedItem();
-      if (!selected) {
-        detailBody.setText("选择一件装备查看属性");
-        actionInfo.setText("");
-        equipBtn.setAlpha(0.6);
-        enhanceBtn.setAlpha(0.6);
-        reforgeBtn.setAlpha(0.6);
-        sellBtn.setAlpha(0.6);
-        return;
-      }
-
-      const lines = [
-        formatItemShort(selected),
-        `强度：${Math.floor(selected.power)}`,
-        "",
-        ...formatStatsLines(selected.stats),
-      ];
-      detailBody.setText(lines.join("\n"));
-
-      const ec = enhanceCost(selected);
-      const rc = reforgeCost(selected);
-      actionInfo.setText(
+      statsText.setText(
         [
-          selectedSource === "equip"
-            ? "已装备：可以强化/重铸，不能出售"
-            : "背包：可以穿戴/强化/重铸/出售",
-          `强化消耗：金币 ${ec.gold}，精华 ${ec.essence}${
-            canEnhance(selected) ? "" : "（已满级）"
-          }`,
-          `重铸消耗：金币 ${rc.gold}，重铸石 ${rc.reforgeStone}`,
-          selectedSource === "inv"
-            ? `出售获得：金币 ${this.sellValue(selected).gold}，精华 ${
-                this.sellValue(selected).essence
-              }`
+          `攻击 ${Math.floor(derived.atk)}`,
+          `防御 ${Math.floor(derived.def)}`,
+          `生命 ${Math.floor(derived.hpMax)}`,
+          `攻速 ${(1000 / derived.attackIntervalMs).toFixed(2)}/s`,
+          `暴击 ${(derived.critChance * 100).toFixed(
+            1
+          )}%  x${derived.critDamage.toFixed(2)}`,
+          (() => {
+            const ls = Math.max(
+              0,
+              derived.lifeStealPct + (this.berserkLifeStealBonusPct || 0)
+            );
+            const tag = this.berserkMs > 0 ? "（狂暴）" : "";
+            return ls > 0 ? `吸血 ${(ls * 100).toFixed(1)}%${tag}` : "";
+          })(),
+          (() => {
+            const th = (this.shieldWallMs > 0 ? 1 : derived.thornsPct) * 100;
+            const tag = this.shieldWallMs > 0 ? "（盾墙）" : "";
+            return `荆棘 ${th.toFixed(1)}%${tag}`;
+          })(),
+          derived.recoveryPct > 0
+            ? `恢复 ${(derived.recoveryPct * 100).toFixed(1)}%（每秒，10秒合计）`
             : "",
         ]
           .filter(Boolean)
           .join("\n")
       );
-
-      equipBtn.setAlpha(selectedSource === "inv" ? 1 : 0.6);
-      enhanceBtn.setAlpha(canEnhance(selected) ? 1 : 0.6);
-      reforgeBtn.setAlpha(1);
-      sellBtn.setAlpha(selectedSource === "inv" ? 1 : 0.6);
-      invTitle.setText(`背包（第 ${page + 1}/${pageCount} 页）`);
+      const nextLv = (this.save.gearLevel ?? 1) + 1;
+      const nextPeak = (this.save.peakTier ?? 0) + 1;
+      const tmp: PlayerSave = JSON.parse(JSON.stringify(this.save));
+      const isGearMax = (this.save.gearLevel ?? 1) >= 250;
+      if (!isGearMax) {
+        tmp.gearLevel = nextLv;
+      } else {
+        tmp.peakTier = nextPeak;
+      }
+      const nextDerived = computeDerivedPlayerStats(tmp);
+      nextStatsText.setText(
+        [
+          `下一级预览（${isGearMax ? "巅峰等级" : "装备等级"}）：`,
+          `攻击 ${Math.floor(nextDerived.atk)}`,
+          `防御 ${Math.floor(nextDerived.def)}`,
+          `生命 ${Math.floor(nextDerived.hpMax)}`,
+          `攻速 ${(1000 / nextDerived.attackIntervalMs).toFixed(2)}/s`,
+          `暴击 ${(nextDerived.critChance * 100).toFixed(
+            1
+          )}%  x${nextDerived.critDamage.toFixed(2)}`,
+        ].join("\n")
+      );
+      // 将按钮放到下一级预览下方，并按条件显示
+      const belowPreviewY = nextStatsText.y + nextStatsText.height + 16;
+      enhanceBtn.setY(belowPreviewY);
+      peakBtn.setY(belowPreviewY);
+      if (!isGearMax) {
+        enhanceBtn.setVisible(true);
+        peakBtn.setVisible(false);
+        costText.setText(`升级下一装备等级需要金币：${calcSingleGold(nextLv)}`);
+        costText.setY(belowPreviewY + 36);
+      } else {
+        enhanceBtn.setVisible(false);
+        peakBtn.setVisible(true);
+        costText.setText(`升级下一巅峰等级需要金币：${calcPeakGold(nextPeak)}`);
+        costText.setY(belowPreviewY + 36);
+      }
     };
-
     refresh();
     this.overlay = this.add.container(0, 0, [
       bg,
       panel,
       title,
-      tabEquip,
-      tabSkills,
-      money,
       closeBtn,
-      equipTitle,
-      invTitle,
-      detailTitle,
-      detailBody,
-      actionInfo,
-      equipBtn,
+      info,
+      statsText,
+      nextStatsText,
+      costText,
       enhanceBtn,
-      reforgeBtn,
-      sellBtn,
-      prevBtn,
-      nextBtn,
-      ...equipLines,
-      ...invLines,
+      peakBtn,
     ]);
     this.pinOverlay();
   }
@@ -1843,7 +2082,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5, 0.5);
 
     const tabEquip = this.add
-      .text(width * 0.5 - 400, height * 0.5 - 220, "装备", {
+      .text(width * 0.5 - 400, height * 0.5 - 220, "角色", {
         fontFamily: "system-ui",
         fontSize: "14px",
         color: "#e2e8f0",
@@ -1854,7 +2093,7 @@ export class BattleScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     tabEquip.on("pointerdown", () => {
       this.clearOverlay();
-      this.openBackpackOverlay();
+      this.openRoleOverlay();
     });
 
     const tabSkills = this.add
@@ -1948,22 +2187,7 @@ export class BattleScene extends Phaser.Scene {
       refresh();
     });
 
-    const branchA = mkBtn(detailX + 90, "分支A", () => {
-      if (!canSelectBranch(this.save, selected)) return;
-      const def = getSkillDef(selected);
-      if (def.branches.length < 1) return;
-      this.save.skills.branches[selected] = def.branches[0]!.id;
-      persistSave(this.save);
-      refresh();
-    });
-    const branchB = mkBtn(detailX + 170, "分支B", () => {
-      if (!canSelectBranch(this.save, selected)) return;
-      const def = getSkillDef(selected);
-      if (def.branches.length < 2) return;
-      this.save.skills.branches[selected] = def.branches[1]!.id;
-      persistSave(this.save);
-      refresh();
-    });
+    // 分支按钮已移除
 
     const equip1 = mkBtn(detailX, "装1", () =>
       this.tryEquipSkillToSlot(selected, 0)
@@ -1974,22 +2198,30 @@ export class BattleScene extends Phaser.Scene {
     const equip3 = mkBtn(detailX + 120, "装3", () =>
       this.tryEquipSkillToSlot(selected, 2)
     );
-    const equipU = mkBtn(detailX + 180, "装U", () =>
-      this.tryEquipUltimate(selected)
+    const equip4 = mkBtn(detailX + 180, "装4", () =>
+      this.tryEquipSkillToSlot(selected, 3)
+    );
+    const equip5 = mkBtn(detailX + 240, "装5", () =>
+      this.tryEquipSkillToSlot(selected, 4)
     );
 
     equip1.setY(btnY + 44);
     equip2.setY(btnY + 44);
     equip3.setY(btnY + 44);
-    equipU.setY(btnY + 44);
+    equip4.setY(btnY + 44);
+    equip5.setY(btnY + 44);
 
-    const respecBtn = mkBtn(detailX + 250, "重置", () => {
+    const respecBtn = mkBtn(detailX + 86, "重置", () => {
+      const ok =
+        typeof window !== "undefined"
+          ? window.confirm("确认重置技能？已投入的技能点将返还")
+          : true;
+      if (!ok) return;
       const spent = this.spentSkillPoints();
       this.save.skills.points += spent;
       this.save.skills.levels = { whirlwind: 1 };
       this.save.skills.branches = {};
-      this.save.skills.equippedActives = ["whirlwind", null, null];
-      this.save.skills.equippedUltimate = null;
+      this.save.skills.equippedActives = ["whirlwind", null, null, null, null];
       persistSave(this.save);
       refresh();
     });
@@ -2004,7 +2236,9 @@ export class BattleScene extends Phaser.Scene {
       equipInfo.setText(
         `已装备：${this.formatActiveSlot(0)} / ${this.formatActiveSlot(
           1
-        )} / ${this.formatActiveSlot(2)}   终极：${this.formatUltimateSlot()}`
+        )} / ${this.formatActiveSlot(2)} / ${this.formatActiveSlot(
+          3
+        )} / ${this.formatActiveSlot(4)}`
       );
 
       const ids = allSkills();
@@ -2040,38 +2274,83 @@ export class BattleScene extends Phaser.Scene {
       const def = getSkillDef(selected);
       const lv = skillLevel(this.save, selected);
       const canUp = canLearnOrUpgrade(this.save, selected);
-      const canBr = canSelectBranch(this.save, selected);
       const unlocked = this.save.level >= def.unlockLevel;
 
-      const branchLines =
-        def.branches.length > 0
-          ? def.branches.map(
-              (b) => `${b.name}${b.description ? `：${b.description}` : ""}`
-            )
-          : [];
       detailTitle.setText(`${def.name}（${def.type}）`);
-      detailBody.setText(
-        skillPreviewLines(this.save, selected)
-          .concat(branchLines.length ? ["", "分支可选：", ...branchLines] : [])
-          .join("\n")
-      );
+      const currentLines = skillPreviewLines(this.save, selected);
+      let lines = [...currentLines];
+      if (def.type === "active") {
+        const curLv = skillLevel(this.save, selected);
+        const nextLv = Math.min(def.maxLevel, curLv + 1);
+        const br = skillBranch(this.save, selected);
+        const sep = "————————————";
+        let nextLines: string[] = [];
+        if (selected === "whirlwind") {
+          const p1 = whirlwindParams(curLv, br);
+          const p2 = whirlwindParams(nextLv, br);
+          nextLines = [
+            `范围：${Math.floor(p2.radius)} (+${Math.floor(
+              p2.radius - p1.radius
+            )})`,
+            `倍率：${Math.round(p2.coef * 100)}% ATK (+${Math.round(
+              (p2.coef - p1.coef) * 100
+            )}%)`,
+          ];
+        } else if (selected === "charge") {
+          const p1 = chargeParams(curLv, br);
+          const p2 = chargeParams(nextLv, br);
+          nextLines = [
+            `倍率：${Math.round(p2.coef * 100)}% ATK (x2) (+${Math.round(
+              (p2.coef - p1.coef) * 100
+            )}%)`,
+          ];
+        } else if (selected === "thunder") {
+          const p1 = thunderParams(curLv);
+          const p2 = thunderParams(nextLv);
+          nextLines = [
+            `范围：${Math.floor(p2.radius)} (+${Math.floor(
+              p2.radius - p1.radius
+            )})`,
+            `倍率：${Math.round(p2.coef * 100)}% ATK (+${Math.round(
+              (p2.coef - p1.coef) * 100
+            )}%)`,
+          ];
+        } else if (selected === "berserk") {
+          const p1 = berserkParams(curLv);
+          const p2 = berserkParams(nextLv);
+          nextLines = [
+            `持续：${(p2.durationMs / 1000).toFixed(1)}s (+${(
+              (p2.durationMs - p1.durationMs) /
+              1000
+            ).toFixed(1)}s)`,
+            `额外吸血：${(p2.lifeStealBonusPct * 100).toFixed(1)}% (+${(
+              (p2.lifeStealBonusPct - p1.lifeStealBonusPct) *
+              100
+            ).toFixed(1)}%)`,
+          ];
+        } else if (selected === "shield_wall") {
+          const p1 = shieldWallParams(curLv);
+          const p2 = shieldWallParams(nextLv);
+          nextLines = [
+            `持续：${(p2.durationMs / 1000).toFixed(1)}s (+${(
+              (p2.durationMs - p1.durationMs) /
+              1000
+            ).toFixed(1)}s)`,
+            `荆棘：100%`,
+          ];
+        }
+        lines = [...currentLines, sep, "下一级预览：", ...nextLines];
+      }
+      detailBody.setText(lines.join("\n"));
 
       upgradeBtn.setAlpha(canUp ? 1 : 0.5);
-      branchA.setText(
-        def.branches[0] ? `分支：${def.branches[0].name}` : "分支A"
-      );
-      branchB.setText(
-        def.branches[1] ? `分支：${def.branches[1].name}` : "分支B"
-      );
-      branchA.setAlpha(canBr && def.branches.length >= 1 ? 1 : 0.5);
-      branchB.setAlpha(canBr && def.branches.length >= 2 ? 1 : 0.5);
 
       const isActive = def.type === "active";
-      const isUltimate = def.type === "ultimate";
       equip1.setAlpha(isActive && lv > 0 ? 1 : 0.4);
       equip2.setAlpha(isActive && lv > 0 ? 1 : 0.4);
       equip3.setAlpha(isActive && lv > 0 ? 1 : 0.4);
-      equipU.setAlpha(isUltimate && lv > 0 ? 1 : 0.4);
+      equip4.setAlpha(isActive && lv > 0 ? 1 : 0.4);
+      equip5.setAlpha(isActive && lv > 0 ? 1 : 0.4);
 
       if (!unlocked) {
         upgradeBtn.setAlpha(0.5);
@@ -2092,12 +2371,11 @@ export class BattleScene extends Phaser.Scene {
       detailTitle,
       detailBody,
       upgradeBtn,
-      branchA,
-      branchB,
       equip1,
       equip2,
       equip3,
-      equipU,
+      equip4,
+      equip5,
       respecBtn,
       ...skillLines,
     ]);
@@ -2116,23 +2394,8 @@ export class BattleScene extends Phaser.Scene {
     this.openSkillsOverlay();
   }
 
-  private tryEquipUltimate(id: SkillId) {
-    const def = getSkillDef(id);
-    if (def.type !== "ultimate") return;
-    if (skillLevel(this.save, id) <= 0) return;
-    this.save.skills.equippedUltimate = id as UltimateSkillId;
-    persistSave(this.save);
-    this.clearOverlay();
-    this.openSkillsOverlay();
-  }
-
   private formatActiveSlot(i: number) {
     const id = this.save.skills.equippedActives[i];
-    return id ? getSkillDef(id).name : "空";
-  }
-
-  private formatUltimateSlot() {
-    const id = this.save.skills.equippedUltimate;
     return id ? getSkillDef(id).name : "空";
   }
 
@@ -2160,11 +2423,22 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateUi() {
-    const derived = computeDerivedPlayerStats(this.save);
+    const derived = this.getDerived();
     const req = requiredExpForNextLevel(this.save.level);
     const expPct = req <= 0 ? 0 : (this.save.exp / req) * 100;
     const hpPct =
       derived.hpMax <= 0 ? 0 : (this.playerHp / derived.hpMax) * 100;
+    const slots = this.save.skills.equippedActives;
+    const cdLine = slots
+      .map((id, i) => {
+        if (!id) return `空${i + 1}: -`;
+        const name = getSkillDef(id).name;
+        const cdMs = Math.max(0, this.activeCooldownMs[i] ?? 0);
+        const sec = (cdMs / 1000).toFixed(1);
+        return `${name} ${sec}s`;
+      })
+      .join("  |  ");
+    this.uiTop.setText(`技能冷却：${cdLine}`);
 
     this.uiLeft.setText(
       [
@@ -2174,12 +2448,8 @@ export class BattleScene extends Phaser.Scene {
           this.save.exp
         }/${req} (${expPct.toFixed(1)}%)`,
         `金币：${Math.floor(this.save.gold)}`,
-        `精华：${Math.floor(this.save.essence)}  重铸石：${Math.floor(
-          this.save.reforgeStone
-        )}`,
+        `装备等级：${this.save.gearLevel}  巅峰：${this.save.peakTier}`,
         `技能点：${this.save.skills.points}`,
-        `背包：${this.save.inventory.length}/80`,
-        `自动下一关：${this.save.autoNext ? "开" : "关"}`,
       ].join("\n")
     );
 
@@ -2193,23 +2463,61 @@ export class BattleScene extends Phaser.Scene {
         `暴击：${(derived.critChance * 100).toFixed(
           1
         )}%  x${derived.critDamage.toFixed(2)}`,
-        derived.lifeStealPct > 0
-          ? `吸血：${(derived.lifeStealPct * 100).toFixed(1)}%`
+        (() => {
+          const cam = this.cameras?.main;
+          if (!cam || !this.playerCircle) return "";
+          const mid = cam.scrollX + cam.width * 0.5;
+          const onRight = this.playerCircle.x >= mid;
+          return onRight ? "位置增益：攻击 +50%" : "位置增益：防御 +50%";
+        })(),
+        (() => {
+          const ls = Math.max(
+            0,
+            derived.lifeStealPct + (this.berserkLifeStealBonusPct || 0)
+          );
+          if (ls <= 0) return "";
+          const tag =
+            this.berserkMs > 0
+              ? `（狂暴 ${Math.max(0, this.berserkMs / 1000).toFixed(1)}s）`
+              : "";
+          return `吸血：${(ls * 100).toFixed(1)}%${tag}`;
+        })(),
+        (() => {
+          const thornsPct =
+            (this.shieldWallMs > 0 ? 1 : derived.thornsPct) * 100;
+          const tag =
+            this.shieldWallMs > 0
+              ? `（盾墙 ${Math.max(0, this.shieldWallMs / 1000).toFixed(1)}s）`
+              : "";
+          return `荆棘：${thornsPct.toFixed(1)}%${tag}`;
+        })(),
+        derived.recoveryPct > 0
+          ? `恢复：${(derived.recoveryPct * 100).toFixed(1)}%（每秒，10秒合计）`
           : "",
-        `荆棘：${(derived.thornsPct * 100).toFixed(1)}%`,
       ]
         .filter(Boolean)
         .join("\n")
     );
 
-    this.uiBottom.setText(
-      [
-        this.lastDropText || "击杀掉落会进背包；更强的同槽位装备会自动替换",
-        "提示：荆棘=受击反弹（受伤×荆棘%），可由装备词缀/被动技能提升",
-        "提示：停留刷关会有收益衰减，推进关卡掉落/经验更高",
-        ...this.combatLog.slice(0, 4),
-      ].join("\n")
-    );
+    this.layoutBottomLogs();
+    const show = !!this.save.showLogs;
+    this.uiBottomFight.setVisible(show);
+    this.uiBottomSkill.setVisible(show);
+    this.uiBottomDefense.setVisible(show);
+    if (show) {
+      const fight = ["战斗日志：", ...this.combatLog.slice(0, 10)].join("\n");
+      const skills = ["技能日志：", ...this.skillLog.slice(0, 10)].join("\n");
+      const defense = ["防御日志：", ...this.defenseLog.slice(0, 10)].join(
+        "\n"
+      );
+      this.uiBottomFight.setText(fight);
+      this.uiBottomSkill.setText(skills);
+      this.uiBottomDefense.setText(defense);
+    } else {
+      this.uiBottomFight.setText("");
+      this.uiBottomSkill.setText("");
+      this.uiBottomDefense.setText("");
+    }
   }
 
   private spawnFloatText(x: number, y: number, text: string, color: string) {

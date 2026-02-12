@@ -3,38 +3,49 @@ import { getSkillDef, skillBranch, skillLevel } from "./skills";
 
 export function skillCooldownMs(id: SkillId, lv: number) {
   const def = getSkillDef(id);
+  if (id === "whirlwind") return 3000;
+  if (id === "charge") return 9000;
+  if (id === "thunder") return 6000;
+  if (id === "berserk") return 30000;
+  if (id === "shield_wall") return 30000;
   const base = def.baseCooldownMs ?? 4000;
   const mult = Math.max(0.65, 1 - 0.03 * Math.max(0, lv - 1));
   return base * mult;
 }
 
 export function skillDamageMult(lv: number) {
-  return 1 + 0.08 * Math.max(0, lv - 1);
+  return 1 + 0.05 * Math.max(0, lv - 1);
 }
 
-export function whirlwindParams(lv: number, branch: string | undefined) {
-  let radius = 110;
-  let coef = 0.75 * skillDamageMult(lv);
-  if (branch === "wide") {
-    radius *= 1.35;
-    coef *= 0.85;
-  } else if (branch === "strong") {
-    radius *= 0.9;
-    coef *= 1.25;
-  }
+export function whirlwindParams(lv: number, _branch: string | undefined) {
+  const radius = 110;
+  const coef = 1.5 + 0.05 * Math.max(0, lv - 1);
   return { radius, coef };
 }
 
-export function chargeParams(lv: number, branch: string | undefined) {
-  let scale = 2.0;
-  let coef = 1.8 * skillDamageMult(lv);
-  if (branch === "heavy") {
-    coef *= 1.4;
-  } else if (branch === "wide") {
-    scale = 2.6;
-    coef *= 1.1;
-  }
+export function chargeParams(lv: number, _branch: string | undefined) {
+  const scale = 2.0;
+  const coef = 2.0 + 0.05 * Math.max(0, lv - 1);
   return { scale, coef };
+}
+
+export function thunderParams(lv: number) {
+  const radius = 110;
+  const coef = 1.5 + 0.08 * Math.max(0, lv - 1);
+  return { radius, coef };
+}
+
+export function berserkParams(lv: number) {
+  const baseDuration = 10000;
+  const durationMs = baseDuration + 100 * Math.max(0, lv - 1);
+  const lifeStealBonusPct = 0.30 + 0.005 * Math.max(0, lv - 1);
+  return { durationMs, lifeStealBonusPct };
+}
+
+export function shieldWallParams(lv: number) {
+  const baseDuration = 10000;
+  const durationMs = baseDuration + 100 * Math.max(0, lv - 1);
+  return { durationMs };
 }
 
 export function skillPreviewLines(save: PlayerSave, id: SkillId) {
@@ -53,20 +64,21 @@ export function skillPreviewLines(save: PlayerSave, id: SkillId) {
     const p = whirlwindParams(lv, br);
     lines.push(`范围：${Math.floor(p.radius)}`);
     lines.push(`倍率：${Math.round(p.coef * 100)}% ATK`);
-    lines.push(`分支：${formatBranch(def, br)}`);
   } else if (id === "charge") {
     const p = chargeParams(lv, br);
-    lines.push(`体型倍率：${p.scale.toFixed(1)}x`);
     lines.push(`倍率：${Math.round(p.coef * 100)}% ATK (x2)`);
-    lines.push(`分支：${formatBranch(def, br)}`);
-  } else if (id === "sharpen") {
-    lines.push(`效果：基础攻击 +${(lv * 3).toFixed(0)}%`);
-  } else if (id === "vitality") {
-    lines.push(`效果：基础生命 +${(lv * 5).toFixed(0)}%`);
-  } else if (id === "precision") {
-    lines.push(`效果：暴击率 +${(lv * 1).toFixed(0)}%`);
-  } else if (id === "thorns") {
-    lines.push(`效果：荆棘 +${(lv * 1).toFixed(0)}%`);
+  } else if (id === "thunder") {
+    const p = thunderParams(lv);
+    lines.push(`范围：${Math.floor(p.radius)}`);
+    lines.push(`倍率：${Math.round(p.coef * 100)}% ATK`);
+  } else if (id === "berserk") {
+    const p = berserkParams(lv);
+    lines.push(`持续：${formatSeconds(p.durationMs)}`);
+    lines.push(`额外吸血：${(p.lifeStealBonusPct * 100).toFixed(1)}%`);
+  } else if (id === "shield_wall") {
+    const p = shieldWallParams(lv);
+    lines.push(`持续：${formatSeconds(p.durationMs)}`);
+    lines.push(`荆棘：100%`);
   }
 
   return lines;
@@ -76,13 +88,4 @@ function formatSeconds(ms: number) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBranch(
-  def: { branches: Array<{ id: string; name: string }> },
-  branchId: string | undefined
-) {
-  if (!def.branches.length) return "无";
-  if (!branchId)
-    return `未选择（${def.branches.map((b) => b.name).join(" / ")}）`;
-  const found = def.branches.find((b) => b.id === branchId);
-  return found ? found.name : branchId;
-}
+// 分支信息已移除

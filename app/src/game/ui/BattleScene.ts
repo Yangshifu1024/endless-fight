@@ -53,6 +53,7 @@ type Enemy = {
   hpBarFill: Phaser.GameObjects.Rectangle;
   hpBarW: number;
   hpBarOffsetY: number;
+  jumpOffsetY?: number;
   expelled?: boolean;
   expelledMs?: number;
 };
@@ -501,6 +502,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updatePlayer(dt: number) {
     if (this.overlay) return;
+    if (this.isDefeated) return;
     if (this.dashLockMs > 0) {
       this.dashLockMs = Math.max(0, this.dashLockMs - dt);
       return;
@@ -537,6 +539,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateEnemies(dt: number) {
     if (this.overlay) return;
+    if (this.isDefeated) return;
 
     for (const e of this.enemies) {
       if (e.expelled) {
@@ -566,7 +569,7 @@ export class BattleScene extends Phaser.Scene {
       } else if (dx > stopDist) {
         e.sprite.x += step;
       }
-      e.sprite.y = this.laneY;
+      e.sprite.y = this.laneY - (e.jumpOffsetY ?? 0);
       e.attackCooldownMs = Math.max(0, e.attackCooldownMs - dt);
       this.updateEnemyHpBar(e);
     }
@@ -574,6 +577,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateSpawns(dt: number) {
     if (this.overlay) return;
+    if (this.isDefeated) return;
 
     if (this.kills >= this.killsNeeded) return;
     this.spawnCooldownMs = Math.max(0, this.spawnCooldownMs - dt);
@@ -592,6 +596,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateCombat(dt: number) {
     if (this.overlay) return;
+    if (this.isDefeated) return;
     if (this.kills >= this.killsNeeded) {
       this.openStageClearOverlay();
       return;
@@ -615,6 +620,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     for (const e of [...this.enemies]) {
+      if ((e.jumpOffsetY ?? 0) > 0) continue;
       const dist = Math.abs(e.sprite.x - this.playerCircle.x);
       if (dist > 26) continue;
       if (e.attackCooldownMs > 0) continue;
@@ -713,14 +719,9 @@ export class BattleScene extends Phaser.Scene {
     let best: Enemy | undefined;
     let bestDist = Infinity;
     for (const e of this.enemies) {
-      const d = Phaser.Math.Distance.Between(
-        e.sprite.x,
-        e.sprite.y,
-        this.playerCircle.x,
-        this.playerCircle.y
-      );
-      if (d < bestDist) {
-        bestDist = d;
+      const dx = Math.abs(e.sprite.x - this.playerCircle.x);
+      if (dx < bestDist) {
+        bestDist = dx;
         best = e;
       }
     }
@@ -979,46 +980,45 @@ export class BattleScene extends Phaser.Scene {
     }
     if (hit.length <= 0) return;
     const cam = this.cameras.main;
-    cam.flash(140, 255, 255, 190);
-    cam.shake(180, 0.006);
+    cam.shake(120, 0.003);
     const ring = this.add.circle(
       this.playerCircle.x,
       this.playerCircle.y,
       p.radius,
-      0xfbbf24,
-      0.16
+      0x93c5fd,
+      0.12
     );
     this.tweens.add({
       targets: ring,
       alpha: 0,
-      duration: 240,
+      duration: 200,
       onComplete: () => ring.destroy(),
     });
     const ring2 = this.add.circle(
       this.playerCircle.x,
       this.playerCircle.y,
       p.radius * 0.6,
-      0xfff7ad,
-      0.22
+      0x93c5fd,
+      0.12
     );
     this.tweens.add({
       targets: ring2,
-      scale: 1.25,
+      scale: 1.15,
       alpha: 0,
-      duration: 280,
+      duration: 220,
       ease: "Cubic.easeOut",
       onComplete: () => ring2.destroy(),
     });
     const bolts = this.add.graphics({ x: 0, y: 0 });
     bolts.setDepth(50);
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 4; i++) {
       const a = this.rng.next() * Math.PI * 2;
       const len = p.radius * (0.7 + 0.3 * this.rng.next());
       const seg = 4 + Math.floor(this.rng.next() * 3);
-      const jitter = 10;
+      const jitter = 4;
       let sx = this.playerCircle.x;
       let sy = this.playerCircle.y;
-      bolts.lineStyle(2, 0xfbbf24, 0.95);
+      bolts.lineStyle(2, 0x93c5fd, 0.35);
       bolts.beginPath();
       bolts.moveTo(sx, sy);
       for (let k = 1; k <= seg; k++) {
@@ -1036,7 +1036,7 @@ export class BattleScene extends Phaser.Scene {
         sy = ty;
       }
       bolts.strokePath();
-      bolts.lineStyle(4, 0xfff7ad, 0.35);
+      bolts.lineStyle(2, 0x93c5fd, 0.12);
       bolts.beginPath();
       bolts.moveTo(this.playerCircle.x, this.playerCircle.y);
       sx = this.playerCircle.x;
@@ -1060,7 +1060,7 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({
       targets: bolts,
       alpha: 0,
-      duration: 220,
+      duration: 140,
       ease: "Quadratic.Out",
       onComplete: () => bolts.destroy(),
     });
@@ -1093,6 +1093,19 @@ export class BattleScene extends Phaser.Scene {
         "#fbbf24"
       );
       this.applyLifeSteal(derived, dmg * 0.35, "雷霆一击");
+      if (e.hp > 0 && e.sprite.active) {
+        e.jumpOffsetY = e.jumpOffsetY ?? 0;
+        this.tweens.add({
+          targets: e,
+          props: { jumpOffsetY: { value: 22 } },
+          duration: 200,
+          yoyo: true,
+          ease: "Back.easeOut",
+          onComplete: () => {
+            e.jumpOffsetY = 0;
+          },
+        });
+      }
     }
     this.pushSkillLog(`雷霆一击：命中${hit.length} 伤害${Math.floor(total)}`);
     for (const e of [...hit]) {
@@ -1108,13 +1121,14 @@ export class BattleScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     const resumeFollow = this.mapW > 0 && this.mapH > 0;
-    cam.stopFollow();
+    if (resumeFollow) {
+      cam.startFollow(this.playerCircle, true, 0.12, 0.12);
+    }
 
     const { width } = this.scale;
     const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
-    const viewRight = this.cameras.main.scrollX + this.cameras.main.width;
-    const endX = Math.min(boundW, viewRight) - pad - 20;
+    const endX = boundW - pad - 20;
 
     this.dashLockMs = Math.max(this.dashLockMs, 1000);
     for (let i = 0; i < this.activeCooldownMs.length; i++) {
@@ -1139,9 +1153,7 @@ export class BattleScene extends Phaser.Scene {
       ease: "Cubic.easeIn",
       onComplete: () => {
         this.dealChargeDamage(derived, p.coef, "冲撞");
-        if (resumeFollow) {
-          cam.startFollow(this.playerCircle, true, 0.12, 0.12);
-        }
+        // 相机已跟随，无需额外处理
       },
     });
   }
@@ -1180,10 +1192,8 @@ export class BattleScene extends Phaser.Scene {
         if (e.hp <= 0) this.killEnemy(e);
       }
       // 推至最右侧堆积（不离场、不眩晕）
-      const viewRight =
-        this.cameras.main.scrollX + this.cameras.main.width - 24;
       const worldRight = (this.mapW > 0 ? this.mapW : this.scale.width) - 24;
-      const rightEdge = Math.min(viewRight, worldRight);
+      const rightEdge = worldRight;
       for (const e of hit) {
         if (!e.sprite.active) continue;
         this.tweens.add({
@@ -1572,6 +1582,7 @@ export class BattleScene extends Phaser.Scene {
       hpBarFill,
       hpBarW: barW,
       hpBarOffsetY: barOffsetY,
+      jumpOffsetY: 0,
     };
   }
 
@@ -1830,13 +1841,72 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private openDefeatOverlay() {
-    if (this.overlay) return;
+    if (this.overlay || this.isDefeated) return;
     persistSave(this.save);
     this.isDefeated = true;
-    if (
-      this.textures.exists("warrior_sheet") &&
-      this.anims.exists("hero_defeat")
-    ) {
+    const hasAnim =
+      this.textures.exists("warrior_sheet") && this.anims.exists("hero_defeat");
+    const show = () => {
+      if (this.overlay) return;
+      const { width, height } = this.scale;
+      const bg = this.add.rectangle(
+        width * 0.5,
+        height * 0.5,
+        width,
+        height,
+        0x000000,
+        0.65
+      );
+      const panel = this.add.rectangle(
+        width * 0.5,
+        height * 0.5,
+        520,
+        220,
+        0x0b1220,
+        0.95
+      );
+      panel.setStrokeStyle(1, 0x334155, 1);
+      const title = this.add
+        .text(width * 0.5, height * 0.5 - 76, "战败", {
+          fontFamily: "system-ui",
+          fontSize: "20px",
+          color: "#fca5a5",
+        })
+        .setOrigin(0.5, 0.5);
+      const desc = this.add
+        .text(width * 0.5, height * 0.5 - 34, "重开本关（不回档）", {
+          fontFamily: "system-ui",
+          fontSize: "14px",
+          color: "#94a3b8",
+        })
+        .setOrigin(0.5, 0.5);
+      const retryBtn = this.add
+        .text(width * 0.5, height * 0.5 + 48, "重开", {
+          fontFamily: "system-ui",
+          fontSize: "16px",
+          color: "#e2e8f0",
+          backgroundColor: "#1e293b",
+          padding: { left: 18, right: 18, top: 8, bottom: 8 },
+        })
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true });
+      retryBtn.on("pointerdown", () => this.startStage());
+      this.overlay = this.add.container(0, 0, [
+        bg,
+        panel,
+        title,
+        desc,
+        retryBtn,
+      ]);
+      this.pinOverlay();
+      if (this.save.autoRetry) {
+        this.time.delayedCall(900, () => {
+          if (!this.overlay) return;
+          this.repeatStage();
+        });
+      }
+    };
+    if (hasAnim) {
       const anim = this.anims.get("hero_defeat");
       const frames = anim?.frames.length ?? 7;
       const durationMs = Math.max(
@@ -1849,65 +1919,11 @@ export class BattleScene extends Phaser.Scene {
       );
       this.attackAnimMs = Math.max(this.attackAnimMs, durationMs);
     }
-
-    const { width, height } = this.scale;
-    const bg = this.add.rectangle(
-      width * 0.5,
-      height * 0.5,
-      width,
-      height,
-      0x000000,
-      0.65
-    );
-    const panel = this.add.rectangle(
-      width * 0.5,
-      height * 0.5,
-      520,
-      220,
-      0x0b1220,
-      0.95
-    );
-    panel.setStrokeStyle(1, 0x334155, 1);
-
-    const title = this.add
-      .text(width * 0.5, height * 0.5 - 76, "战败", {
-        fontFamily: "system-ui",
-        fontSize: "20px",
-        color: "#fca5a5",
-      })
-      .setOrigin(0.5, 0.5);
-
-    const desc = this.add
-      .text(width * 0.5, height * 0.5 - 34, "重开本关（不回档）", {
-        fontFamily: "system-ui",
-        fontSize: "14px",
-        color: "#94a3b8",
-      })
-      .setOrigin(0.5, 0.5);
-
-    const retryBtn = this.add
-      .text(width * 0.5, height * 0.5 + 48, "重开", {
-        fontFamily: "system-ui",
-        fontSize: "16px",
-        color: "#e2e8f0",
-        backgroundColor: "#1e293b",
-        padding: { left: 18, right: 18, top: 8, bottom: 8 },
-      })
-      .setOrigin(0.5, 0.5)
-      .setInteractive({ useHandCursor: true });
-    retryBtn.on("pointerdown", () => this.startStage());
-
-    this.overlay = this.add.container(0, 0, [bg, panel, title, desc, retryBtn]);
-    this.pinOverlay();
-
-    if (this.save.autoRetry) {
-      this.time.delayedCall(900, () => {
-        if (!this.overlay) return;
-        this.repeatStage();
-      });
-    }
+    this.time.delayedCall(1000, () => {
+      if (this.overlay) return;
+      show();
+    });
   }
-
   private clearOverlay() {
     this.overlay?.destroy(true);
     this.overlay = undefined;

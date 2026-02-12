@@ -22,9 +22,14 @@ function addInto(dst: Stats, src: Stats) {
 export function computeDerivedPlayerStats(save: PlayerSave): DerivedPlayerStats {
   const lv = Math.max(1, save.level)
   const bonuses = passiveBonuses(save)
-  const baseAtk = (10 + (lv - 1) * 2) * (1 + bonuses.atkPct)
-  const baseHp = (120 + (lv - 1) * 22) * (1 + bonuses.hpPct)
-  const baseDef = 3 + (lv - 1) * 0.9
+  const stage = Math.max(1, save.stage)
+  const earlyBoost = clamp(1.45 - 0.07 * (stage - 1), 1, 1.45)
+  const earlyDefFlat = clamp(5 - stage, 0, 4)
+  const earlyLifeStealAdd = clamp(0.06 - 0.01 * (stage - 1), 0, 0.06)
+
+  const baseAtk = (10 + (lv - 1) * 2) * (1 + bonuses.atkPct) * earlyBoost
+  const baseHp = (120 + (lv - 1) * 22) * (1 + bonuses.hpPct) * earlyBoost
+  const baseDef = 3 + (lv - 1) * 0.9 + earlyDefFlat
 
   const total: Stats = {}
   for (const it of Object.values(save.equipment)) {
@@ -42,7 +47,11 @@ export function computeDerivedPlayerStats(save: PlayerSave): DerivedPlayerStats 
   const critChance = clamp((total.critChance ?? 0) + bonuses.critChance, 0, 0.6)
   const critDamage = clamp(1.5 + (total.critDamage ?? 0), 1.25, 3.0)
   const baseLifeStealPct = 0.05
-  const lifeStealPct = clamp(baseLifeStealPct + (total.lifeStealPct ?? 0), 0, 0.25)
+  const lifeStealPct = clamp(
+    baseLifeStealPct + earlyLifeStealAdd + (total.lifeStealPct ?? 0),
+    0,
+    0.25
+  )
 
   return { atk, hpMax, def, attackIntervalMs, critChance, critDamage, lifeStealPct }
 }

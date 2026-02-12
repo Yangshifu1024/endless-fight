@@ -16,15 +16,14 @@ export type Stats = Partial<Record<StatKey, number>>
 
 export type SkillId =
   | 'whirlwind'
-  | 'chain_lightning'
-  | 'meteor'
+  | 'charge'
   | 'sharpen'
   | 'vitality'
   | 'precision'
   | 'thorns'
 
-export type ActiveSkillId = 'whirlwind' | 'chain_lightning'
-export type UltimateSkillId = 'meteor'
+export type ActiveSkillId = 'whirlwind' | 'charge'
+export type UltimateSkillId = never
 export type PassiveSkillId = 'sharpen' | 'vitality' | 'precision' | 'thorns'
 
 export interface EquipmentItem {

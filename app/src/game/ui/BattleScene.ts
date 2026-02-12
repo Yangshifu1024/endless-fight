@@ -36,8 +36,7 @@ import {
   skillLevel,
 } from "../skills/skills";
 import {
-  chainLightningParams,
-  meteorParams,
+  chargeParams,
   skillCooldownMs,
   skillPreviewLines,
   whirlwindParams,
@@ -72,7 +71,6 @@ export class BattleScene extends Phaser.Scene {
   private playerHpBarFill!: Phaser.GameObjects.Rectangle;
   private playerAttackCdMs = 0;
   private activeCooldownMs = [0, 0, 0];
-  private ultimateCooldownMs = 0;
   private playerAnimT = 0;
   private attackAnimMs = 0;
   private heroDir: "down" | "up" | "left" | "right" = "down";
@@ -242,6 +240,7 @@ export class BattleScene extends Phaser.Scene {
       const run = range(48, 8);
       const attack1 = range(176, 8);
       const attack2 = range(80, 6);
+      const attack3 = range(198, 10);
       const mk = (
         key: string,
         frames: number[],
@@ -265,6 +264,7 @@ export class BattleScene extends Phaser.Scene {
       mk("hero_run_right", run, 14, -1);
       mk("hero_attack1", attack1, 12, 0);
       mk("hero_attack2", attack2, 12, 0);
+      mk("hero_attack3", attack3, 12, 0);
       return;
     }
   }
@@ -273,14 +273,14 @@ export class BattleScene extends Phaser.Scene {
     if (!this.textures.exists("warrior_sheet")) return;
     if (
       this.attackAnimMs > 0 &&
-      (this.anims.exists("hero_attack1") || this.anims.exists("hero_attack2"))
+      (this.anims.exists("hero_attack1") ||
+        this.anims.exists("hero_attack2") ||
+        this.anims.exists("hero_attack3"))
     )
       return;
     const moving = Math.abs(vx) + Math.abs(vy) > 0.001;
-    if (moving) {
-      if (Math.abs(vx) > Math.abs(vy))
-        this.heroDir = vx >= 0 ? "right" : "left";
-      else this.heroDir = vy >= 0 ? "down" : "up";
+    if (moving && Math.abs(vx) > 0.001) {
+      this.heroDir = vx >= 0 ? "right" : "left";
     }
     const key = `hero_${moving ? "run" : "idle"}_${this.heroDir}`;
     if (!this.anims.exists(key)) return;
@@ -441,16 +441,9 @@ export class BattleScene extends Phaser.Scene {
     this.playerCircle.setPosition(nx, this.laneY);
     this.updateHeroAnim(hitMidline ? 0 : vx, 0);
     this.playerAnimT += dt;
-    const moving = Math.abs(vx) > 0.0001;
-    const bob =
-      Math.sin(this.playerAnimT * (moving ? 0.03 : 0.015)) *
-      (moving ? 0.06 : 0.03);
-    const scaleX = 1 + bob;
-    const scaleY = 1 - bob * 0.35;
-    this.playerCircle.setScale(
-      this.playerBaseScale * scaleX,
-      this.playerBaseScale * scaleY
-    );
+    if (this.attackAnimMs <= 0) {
+      this.playerCircle.setScale(this.playerBaseScale);
+    }
   }
 
   private updateEnemies(dt: number) {
@@ -620,16 +613,6 @@ export class BattleScene extends Phaser.Scene {
       this.castActiveSkill(id, lv, derived);
       this.activeCooldownMs[i] = skillCooldownMs(id, lv);
     }
-
-    this.ultimateCooldownMs = Math.max(0, this.ultimateCooldownMs - dt);
-    const uid = this.save.skills.equippedUltimate;
-    if (uid && this.ultimateCooldownMs <= 0 && this.enemies.length >= 3) {
-      const lv = skillLevel(this.save, uid);
-      if (lv > 0) {
-        this.castUltimateSkill(uid, lv, derived);
-        this.ultimateCooldownMs = skillCooldownMs(uid, lv);
-      }
-    }
   }
 
   private castActiveSkill(
@@ -641,20 +624,8 @@ export class BattleScene extends Phaser.Scene {
       case "whirlwind":
         this.castWhirlwindSkill(lv, derived);
         break;
-      case "chain_lightning":
-        this.castChainLightningSkill(lv, derived);
-        break;
-    }
-  }
-
-  private castUltimateSkill(
-    id: UltimateSkillId,
-    lv: number,
-    derived: ReturnType<typeof computeDerivedPlayerStats>
-  ) {
-    switch (id) {
-      case "meteor":
-        this.castMeteorSkill(lv, derived);
+      case "charge":
+        this.castChargeSkill(lv, derived);
         break;
     }
   }
@@ -677,6 +648,21 @@ export class BattleScene extends Phaser.Scene {
       if (d <= p.radius) hit.push(e);
     }
     if (hit.length <= 0) return;
+    if (this.anims.exists("hero_attack3")) {
+      const duration = 600;
+      this.attackAnimMs = Math.max(this.attackAnimMs, duration);
+      this.playerCircle.anims.play(
+        { key: "hero_attack3", frameRate: 18 },
+        true
+      );
+      this.playerCircle.setScale(this.playerBaseScale * 1.4);
+      this.playerCircle.setTint(0x60a5fa);
+      this.time.delayedCall(duration, () => {
+        if (this.playerCircle && this.playerCircle.active) {
+          this.playerCircle.clearTint();
+        }
+      });
+    }
 
     const ring = this.add.circle(
       this.playerCircle.x,
@@ -712,139 +698,73 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private castChainLightningSkill(
+  private castChargeSkill(
     lv: number,
     derived: ReturnType<typeof computeDerivedPlayerStats>
   ) {
-    const branch = skillBranch(this.save, "chain_lightning");
-    const p = chainLightningParams(lv, branch);
+    const branch = skillBranch(this.save, "charge");
+    const p = chargeParams(lv, branch);
 
-    const target = this.findNearestEnemyTo(
-      this.playerCircle.x,
-      this.playerCircle.y,
-      p.dashRange,
-      new Set()
-    );
-    if (!target) return;
-
-    const dx = target.sprite.x - this.playerCircle.x;
-    const dy = target.sprite.y - this.playerCircle.y;
-    const dist = Math.max(0.001, Math.hypot(dx, dy));
-    const ux = dx / dist;
-    const uy = dy / dist;
-    if (Math.abs(dx) > Math.abs(dy)) this.heroDir = dx >= 0 ? "right" : "left";
-    else this.heroDir = dy >= 0 ? "down" : "up";
-
-    const stopDist = 24;
     const { width } = this.scale;
     const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
-    const destX = Phaser.Math.Clamp(
-      target.sprite.x - ux * stopDist,
-      pad,
-      boundW - pad
-    );
-    const destY = this.laneY;
+    const startX = this.playerCircle.x;
+    const viewRight = this.cameras.main.scrollX + this.cameras.main.width;
+    const endX = Math.min(boundW, viewRight) - pad - 20;
 
-    this.dashLockMs = Math.max(this.dashLockMs, 240);
+    this.dashLockMs = Math.max(this.dashLockMs, 1000);
+    for (let i = 0; i < this.activeCooldownMs.length; i++) {
+      this.activeCooldownMs[i] = Math.max(this.activeCooldownMs[i], 1000);
+    }
+
+    const originalScale = this.playerBaseScale;
+    const targetScale = originalScale * p.scale;
+
     this.tweens.add({
       targets: this.playerCircle,
-      x: destX,
-      y: destY,
-      duration: 140,
-      ease: "Cubic.easeOut",
+      scale: targetScale,
+      duration: 200,
+      yoyo: true,
+      hold: 600,
       onComplete: () => {
-        const cx = this.playerCircle.x;
-        const cy = this.playerCircle.y;
-        const ang = Math.atan2(uy, ux);
-        const g = this.add.graphics();
-        g.fillStyle(0xfbbf24, 0.14);
-        g.beginPath();
-        g.moveTo(cx, cy);
-        g.arc(cx, cy, p.radius, ang - Math.PI / 2, ang + Math.PI / 2, false);
-        g.closePath();
-        g.fillPath();
+        if (this.playerCircle && this.playerCircle.active) {
+          this.playerCircle.setScale(originalScale);
+        }
+      },
+    });
+
+    this.tweens.add({
+      targets: this.playerCircle,
+      x: endX,
+      duration: 300,
+      ease: "Cubic.easeIn",
+      onComplete: () => {
+        this.dealChargeDamage(derived, p.coef, "冲撞(去)");
         this.tweens.add({
-          targets: g,
-          alpha: 0,
-          duration: 240,
-          onComplete: () => g.destroy(),
+          targets: this.playerCircle,
+          x: startX,
+          duration: 300,
+          ease: "Cubic.easeOut",
+          onComplete: () => {
+            this.dealChargeDamage(derived, p.coef, "冲撞(回)");
+          },
         });
-
-        const hit: Enemy[] = [];
-        for (const e of this.enemies) {
-          if (e.hp <= 0) continue;
-          const ex = e.sprite.x - cx;
-          const ey = e.sprite.y - cy;
-          const ed = Math.hypot(ex, ey);
-          if (ed > p.radius) continue;
-          const dot =
-            (ex / Math.max(0.001, ed)) * ux + (ey / Math.max(0.001, ed)) * uy;
-          if (dot < 0) continue;
-          hit.push(e);
-        }
-        if (hit.length <= 0) return;
-
-        let total = 0;
-        for (const e of hit) {
-          let dmgRaw = derived.atk * p.coef;
-          if (branch === "shock" && e.isElite) dmgRaw *= p.eliteMult;
-          const dmg = damageAfterDefense(dmgRaw, e.def);
-          e.hp -= dmg;
-          total += dmg;
-          this.flashEnemy(e);
-          this.spawnFloatText(
-            e.sprite.x,
-            e.sprite.y - 16,
-            `${Math.floor(dmg)}`,
-            "#fde68a"
-          );
-          this.applyLifeSteal(derived, dmg * 0.22, "天神下凡");
-        }
-        this.pushCombatLog(
-          `天神下凡：命中${hit.length} 伤害${Math.floor(total)}`
-        );
-        for (const e of [...hit]) {
-          if (e.hp <= 0) this.killEnemy(e);
-        }
       },
     });
   }
 
-  private castMeteorSkill(
-    lv: number,
-    derived: ReturnType<typeof computeDerivedPlayerStats>
+  private dealChargeDamage(
+    derived: ReturnType<typeof computeDerivedPlayerStats>,
+    coef: number,
+    source: string
   ) {
-    const branch = skillBranch(this.save, "meteor");
-    const p = meteorParams(lv, branch);
-    const raw = derived.atk * p.coef;
-    const targets = this.enemies.filter(
-      (e) =>
-        Phaser.Math.Distance.Between(
-          e.sprite.x,
-          e.sprite.y,
-          this.playerCircle.x,
-          this.playerCircle.y
-        ) <= p.radius
-    );
-    if (targets.length <= 0) return;
-
-    const ring = this.add.circle(
-      this.playerCircle.x,
-      this.playerCircle.y,
-      p.radius,
-      0xf59e0b,
-      0.12
-    );
-    this.tweens.add({
-      targets: ring,
-      alpha: 0,
-      duration: 360,
-      onComplete: () => ring.destroy(),
-    });
-
+    if (this.enemies.length <= 0) return;
+    const raw = derived.atk * coef;
     let total = 0;
-    for (const e of targets) {
+    const hit: Enemy[] = [];
+
+    for (const e of this.enemies) {
+      if (e.hp <= 0) continue;
       const dmg = damageAfterDefense(raw, e.def);
       e.hp -= dmg;
       total += dmg;
@@ -853,51 +773,19 @@ export class BattleScene extends Phaser.Scene {
         e.sprite.x,
         e.sprite.y - 16,
         `${Math.floor(dmg)}`,
-        "#fdba74"
+        "#fde68a"
       );
-      this.applyLifeSteal(derived, dmg * 0.18, "陨星");
-    }
-    this.pushCombatLog(`陨星：命中${targets.length} 伤害${Math.floor(total)}`);
-    for (const e of [...targets]) {
-      if (e.hp <= 0) this.killEnemy(e);
+      hit.push(e);
     }
 
-    if (p.burn) {
-      const tickRaw = derived.atk * p.coef * 0.4;
-      this.time.delayedCall(650, () => {
-        if (this.overlay) return;
-        const laterTargets = this.enemies.filter(
-          (e) =>
-            Phaser.Math.Distance.Between(
-              e.sprite.x,
-              e.sprite.y,
-              this.playerCircle.x,
-              this.playerCircle.y
-            ) <= p.radius
-        );
-        let burnTotal = 0;
-        for (const e of laterTargets) {
-          const dmg = damageAfterDefense(tickRaw, e.def);
-          e.hp -= dmg;
-          burnTotal += dmg;
-          this.flashEnemy(e);
-          this.spawnFloatText(
-            e.sprite.x,
-            e.sprite.y - 16,
-            `${Math.floor(dmg)}`,
-            "#fb923c"
-          );
-          this.applyLifeSteal(derived, dmg * 0.1, "陨星灼烧");
-        }
-        if (laterTargets.length > 0) {
-          this.pushCombatLog(
-            `陨星灼烧：命中${laterTargets.length} 伤害${Math.floor(burnTotal)}`
-          );
-        }
-        for (const e of [...laterTargets]) {
-          if (e.hp <= 0) this.killEnemy(e);
-        }
-      });
+    if (hit.length > 0) {
+      this.pushCombatLog(
+        `${source}：命中${hit.length} 伤害${Math.floor(total)}`
+      );
+      this.applyLifeSteal(derived, total * 0.1, source);
+      for (const e of hit) {
+        if (e.hp <= 0) this.killEnemy(e);
+      }
     }
   }
 
@@ -1322,7 +1210,6 @@ export class BattleScene extends Phaser.Scene {
     this.playerHp = Math.min(derived.hpMax, derived.hpMax);
     this.playerAttackCdMs = 0;
     this.activeCooldownMs = [900, 1400, 2000];
-    this.ultimateCooldownMs = 6500;
     this.lastDropText = "";
     this.combatLog = [];
     this.attackAnimMs = 0;

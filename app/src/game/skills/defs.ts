@@ -16,42 +16,25 @@ export const skillDefs: Record<SkillId, SkillDef> = {
     ],
     baseCooldownMs: 4500,
   },
-  chain_lightning: {
-    id: "chain_lightning",
+  charge: {
+    id: "charge",
     type: "active",
-    name: "天神下凡",
-    description: "冲锋至目标前方，并对前方 180° 范围造成伤害。",
+    name: "冲撞",
+    description: "变大并冲锋至屏幕最右侧再返回，造成2次伤害。",
     unlockLevel: 3,
     maxLevel: 7,
     branchUnlockLevel: 3,
     branches: [
       {
-        id: "fork",
-        name: "横扫",
-        description: "范围更大，但伤害略低。",
+        id: "heavy",
+        name: "重击",
+        description: "造成更高伤害。",
       },
-      { id: "shock", name: "破军", description: "对精英造成更高伤害。" },
+      { id: "wide", name: "巨化", description: "体型更大，攻击范围更广。" },
     ],
-    baseCooldownMs: 5200,
+    baseCooldownMs: 20000,
   },
-  meteor: {
-    id: "meteor",
-    type: "ultimate",
-    name: "陨星",
-    description: "大范围高伤害，适合清场。",
-    unlockLevel: 8,
-    maxLevel: 5,
-    branchUnlockLevel: 2,
-    branches: [
-      { id: "impact", name: "冲击", description: "更高瞬间伤害，更小范围。" },
-      {
-        id: "burn",
-        name: "余烬",
-        description: "范围更大，并追加一次延迟灼烧。",
-      },
-    ],
-    baseCooldownMs: 18000,
-  },
+
   sharpen: {
     id: "sharpen",
     type: "passive",

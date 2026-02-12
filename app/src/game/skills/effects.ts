@@ -25,33 +25,16 @@ export function whirlwindParams(lv: number, branch: string | undefined) {
   return { radius, coef };
 }
 
-export function chainLightningParams(lv: number, branch: string | undefined) {
-  let dashRange = 250 + lv * 6;
-  let radius = 95;
-  let coef = 0.85 * skillDamageMult(lv);
-  let eliteMult = 1;
-  if (branch === "fork") {
-    radius *= 1.25;
-    coef *= 0.9;
-  } else if (branch === "shock") {
-    eliteMult = 1.35;
+export function chargeParams(lv: number, branch: string | undefined) {
+  let scale = 2.0;
+  let coef = 1.8 * skillDamageMult(lv);
+  if (branch === "heavy") {
+    coef *= 1.4;
+  } else if (branch === "wide") {
+    scale = 2.6;
+    coef *= 1.1;
   }
-  return { dashRange, radius, coef, eliteMult };
-}
-
-export function meteorParams(lv: number, branch: string | undefined) {
-  let radius = 180;
-  let coef = 2.0 * skillDamageMult(lv);
-  let burn = false;
-  if (branch === "impact") {
-    radius *= 0.9;
-    coef *= 1.35;
-  } else if (branch === "burn") {
-    radius *= 1.1;
-    coef *= 0.9;
-    burn = true;
-  }
-  return { radius, coef, burn };
+  return { scale, coef };
 }
 
 export function skillPreviewLines(save: PlayerSave, id: SkillId) {
@@ -71,18 +54,10 @@ export function skillPreviewLines(save: PlayerSave, id: SkillId) {
     lines.push(`范围：${Math.floor(p.radius)}`);
     lines.push(`倍率：${Math.round(p.coef * 100)}% ATK`);
     lines.push(`分支：${formatBranch(def, br)}`);
-  } else if (id === "chain_lightning") {
-    const p = chainLightningParams(lv, br);
-    lines.push(`冲锋距离：${Math.floor(p.dashRange)}`);
-    lines.push(`范围：前方 180° 半径 ${Math.floor(p.radius)}`);
-    lines.push(`倍率：${Math.round(p.coef * 100)}% ATK`);
-    if (br === "shock") lines.push(`精英倍率：${p.eliteMult.toFixed(2)}x`);
-    lines.push(`分支：${formatBranch(def, br)}`);
-  } else if (id === "meteor") {
-    const p = meteorParams(lv, br);
-    lines.push(`范围：${Math.floor(p.radius)}`);
-    lines.push(`倍率：${Math.round(p.coef * 100)}% ATK`);
-    if (p.burn) lines.push("追加：延迟灼烧 1 次（约 40% 伤害）");
+  } else if (id === "charge") {
+    const p = chargeParams(lv, br);
+    lines.push(`体型倍率：${p.scale.toFixed(1)}x`);
+    lines.push(`倍率：${Math.round(p.coef * 100)}% ATK (x2)`);
     lines.push(`分支：${formatBranch(def, br)}`);
   } else if (id === "sharpen") {
     lines.push(`效果：基础攻击 +${(lv * 3).toFixed(0)}%`);

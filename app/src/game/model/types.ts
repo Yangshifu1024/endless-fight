@@ -10,6 +10,7 @@ export type StatKey =
   | 'critChance'
   | 'critDamage'
   | 'lifeStealPct'
+  | 'thornsPct'
 
 export type Stats = Partial<Record<StatKey, number>>
 
@@ -20,10 +21,11 @@ export type SkillId =
   | 'sharpen'
   | 'vitality'
   | 'precision'
+  | 'thorns'
 
 export type ActiveSkillId = 'whirlwind' | 'chain_lightning'
 export type UltimateSkillId = 'meteor'
-export type PassiveSkillId = 'sharpen' | 'vitality' | 'precision'
+export type PassiveSkillId = 'sharpen' | 'vitality' | 'precision' | 'thorns'
 
 export interface EquipmentItem {
   id: string

@@ -114,6 +114,7 @@ function rollAffix(rng: Rng, iLv: number, scalar: number, stats: Stats) {
     { item: 'critChance' as const, weight: 10 },
     { item: 'critDamage' as const, weight: 4 },
     { item: 'lifeStealPct' as const, weight: 1 },
+    { item: 'thornsPct' as const, weight: 2 },
   ]
   const key = pickWeighted(rng, pool)
   switch (key) {
@@ -137,6 +138,9 @@ function rollAffix(rng: Rng, iLv: number, scalar: number, stats: Stats) {
       break
     case 'lifeStealPct':
       addStat(stats, key, (0.01 + t * 0.00012) * scalar)
+      break
+    case 'thornsPct':
+      addStat(stats, key, (0.012 + t * 0.00016) * scalar)
       break
   }
 }
@@ -166,7 +170,8 @@ export function estimatePower(stats: Stats) {
   const cc = stats.critChance ?? 0
   const cd = stats.critDamage ?? 0
   const ls = stats.lifeStealPct ?? 0
-  return atk * 2.2 + hp * 0.25 + def * 1.4 + as * 320 + cc * 520 + cd * 160 + ls * 220
+  const th = stats.thornsPct ?? 0
+  return atk * 2.2 + hp * 0.25 + def * 1.4 + as * 320 + cc * 520 + cd * 160 + ls * 220 + th * 260
 }
 
 export function enhanceCost(item: EquipmentItem) {
@@ -226,6 +231,7 @@ export function formatStatsLines(stats: Stats) {
   add('暴击率', stats.critChance ?? 0, true)
   add('暴击伤害', stats.critDamage ?? 0, true)
   add('吸血', stats.lifeStealPct ?? 0, true)
+  add('荆棘', stats.thornsPct ?? 0, true)
   return lines
 }
 

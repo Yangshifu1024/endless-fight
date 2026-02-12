@@ -63,6 +63,18 @@ export class BattleScene extends Phaser.Scene {
   private rng = createRng(Date.now());
 
   private playerCircle!: Phaser.GameObjects.Sprite;
+  private heroLayers: Partial<
+    Record<
+      "armor" | "helmet" | "weapon" | "accessory",
+      Phaser.GameObjects.Sprite
+    >
+  > = {};
+  private heroLayerOrder: Array<"armor" | "helmet" | "weapon" | "accessory"> = [
+    "armor",
+    "helmet",
+    "weapon",
+    "accessory",
+  ];
   private playerHp = 1;
   private playerBaseScale = 2;
   private playerHpBarBg!: Phaser.GameObjects.Rectangle;
@@ -71,16 +83,20 @@ export class BattleScene extends Phaser.Scene {
   private activeCooldownMs = [0, 0, 0];
   private ultimateCooldownMs = 0;
   private playerAnimT = 0;
+  private attackAnimMs = 0;
   private heroDir: "down" | "up" | "left" | "right" = "down";
   private kenneyCharCols = 0;
-  private kenneyHeroIndex = 0;
+  private kenneyHeroFrame = 0;
   private mapW = 0;
   private mapH = 0;
+  private laneY = 0;
+  private heroStartX = 0;
 
   private enemies: Enemy[] = [];
   private kills = 0;
   private killsNeeded = 0;
   private spawnCooldownMs = 0;
+  private dashLockMs = 0;
 
   private uiLeft!: Phaser.GameObjects.Text;
   private uiRight!: Phaser.GameObjects.Text;
@@ -88,6 +104,7 @@ export class BattleScene extends Phaser.Scene {
   private uiButtons: Phaser.GameObjects.Text[] = [];
   private overlay: Phaser.GameObjects.Container | undefined;
   private lastDropText = "";
+  private combatLog: string[] = [];
 
   private keys!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
@@ -97,9 +114,9 @@ export class BattleScene extends Phaser.Scene {
 
   preload() {
     this.load.spritesheet(
-      "kenney_char",
-      "/assets/kenney/kenney_roguelike-characters/roguelikeChar_transparent.png",
-      { frameWidth: 16, frameHeight: 16, margin: 0, spacing: 1 }
+      "warrior_sheet",
+      "/assets/character/WarriorMan-Sheet.png",
+      { frameWidth: 80, frameHeight: 64, margin: 0, spacing: 0 }
     );
     this.load.image(
       "kenney_tiles",
@@ -119,21 +136,37 @@ export class BattleScene extends Phaser.Scene {
     this.ensureActorTextures();
     this.createKenneyMap();
     this.createHeroAnims();
-    const heroStartX = this.mapW > 0 ? this.mapW * 0.5 : width * 0.5;
-    const heroStartY = this.mapH > 0 ? this.mapH * 0.5 : height * 0.58;
+    if (this.textures.exists("warrior_sheet")) this.playerBaseScale = 1;
+    const pad = 12 * this.playerBaseScale + 20;
+    const heroStartX = pad;
+    const heroStartY = this.mapH > 0 ? this.mapH * 0.6 : height * 0.6;
+    this.heroStartX = heroStartX;
+    this.laneY = heroStartY;
+    const heroKey = this.textures.exists("warrior_sheet")
+      ? "warrior_sheet"
+      : this.textures.exists("kenney_char")
+      ? "kenney_char"
+      : "player";
+    const heroFrame =
+      heroKey === "warrior_sheet"
+        ? 0
+        : heroKey === "kenney_char"
+        ? this.heroFrame("down", 1)
+        : undefined;
     this.playerCircle = this.add.sprite(
       heroStartX,
       heroStartY,
-      this.textures.exists("kenney_char") ? "kenney_char" : "player",
-      this.textures.exists("kenney_char")
-        ? this.heroFrame("down", 1)
-        : undefined
+      heroKey,
+      heroFrame
     );
     if (this.mapW > 0 && this.mapH > 0) {
       this.cameras.main.startFollow(this.playerCircle, true, 0.12, 0.12);
     }
     this.playerCircle.setDepth(10);
     this.playerCircle.setScale(this.playerBaseScale);
+    this.createHeroLayers();
+    this.refreshHeroAppearance();
+    this.updateHeroAnim(0, 0);
     this.playerHp = computeDerivedPlayerStats(this.save).hpMax;
     this.createPlayerHpBar();
 
@@ -180,6 +213,12 @@ export class BattleScene extends Phaser.Scene {
     for (const child of this.overlay.list) this.pinToScreen(child as any);
   }
 
+  private pushCombatLog(msg: string) {
+    this.combatLog.unshift(msg);
+    if (this.combatLog.length > 2000)
+      this.combatLog = this.combatLog.slice(0, 2000);
+  }
+
   private createKenneyMap() {
     if (!this.cache.tilemap.exists("kenney_map")) return;
     if (!this.textures.exists("kenney_tiles")) return;
@@ -214,6 +253,37 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private createHeroAnims() {
+    if (this.textures.exists("warrior_sheet")) {
+      if (this.anims.exists("hero_idle_down")) return;
+      const range = (start: number, count: number) =>
+        Array.from({ length: count }, (_, i) => start + i);
+      const idle = range(0, 8);
+      const run = range(48, 8);
+      const attack2 = range(80, 6);
+      const mk = (
+        key: string,
+        frames: number[],
+        frameRate: number,
+        repeat: number
+      ) => {
+        this.anims.create({
+          key,
+          frames: frames.map((frame) => ({ key: "warrior_sheet", frame })),
+          frameRate,
+          repeat,
+        });
+      };
+      mk("hero_idle_down", idle, 10, -1);
+      mk("hero_idle_up", idle, 10, -1);
+      mk("hero_idle_left", idle, 10, -1);
+      mk("hero_idle_right", idle, 10, -1);
+      mk("hero_run_down", run, 14, -1);
+      mk("hero_run_up", run, 14, -1);
+      mk("hero_run_left", run, 14, -1);
+      mk("hero_run_right", run, 14, -1);
+      mk("hero_attack", attack2, 12, 0);
+      return;
+    }
     if (!this.textures.exists("kenney_char")) return;
     if (this.anims.exists("hero_idle_down")) return;
     const img = this.textures
@@ -221,6 +291,8 @@ export class BattleScene extends Phaser.Scene {
       .getSourceImage() as HTMLImageElement;
     const cols = Math.floor((img.width + 1) / (16 + 1));
     this.kenneyCharCols = Math.max(1, cols);
+    const rows = Math.floor((img.height + 1) / (16 + 1));
+    this.kenneyHeroFrame = (Math.max(1, rows) - 1) * this.kenneyCharCols;
     const mk = (
       key: string,
       frames: number[],
@@ -234,85 +306,137 @@ export class BattleScene extends Phaser.Scene {
         repeat,
       });
     };
-    mk("hero_idle_down", [this.heroFrame("down", 1)], 1, -1);
-    mk("hero_idle_up", [this.heroFrame("up", 1)], 1, -1);
-    mk("hero_idle_left", [this.heroFrame("left", 1)], 1, -1);
-    mk("hero_idle_right", [this.heroFrame("right", 1)], 1, -1);
-    mk(
-      "hero_walk_down",
-      [
-        this.heroFrame("down", 0),
-        this.heroFrame("down", 1),
-        this.heroFrame("down", 2),
-      ],
-      9,
-      -1
-    );
-    mk(
-      "hero_walk_up",
-      [
-        this.heroFrame("up", 0),
-        this.heroFrame("up", 1),
-        this.heroFrame("up", 2),
-      ],
-      9,
-      -1
-    );
-    mk(
-      "hero_walk_left",
-      [
-        this.heroFrame("left", 0),
-        this.heroFrame("left", 1),
-        this.heroFrame("left", 2),
-      ],
-      9,
-      -1
-    );
-    mk(
-      "hero_walk_right",
-      [
-        this.heroFrame("right", 0),
-        this.heroFrame("right", 1),
-        this.heroFrame("right", 2),
-      ],
-      9,
-      -1
-    );
+    const f = this.heroFrame("down", 1);
+    mk("hero_idle_down", [f], 1, -1);
+    mk("hero_idle_up", [f], 1, -1);
+    mk("hero_idle_left", [f], 1, -1);
+    mk("hero_idle_right", [f], 1, -1);
+    mk("hero_walk_down", [f], 1, -1);
+    mk("hero_walk_up", [f], 1, -1);
+    mk("hero_walk_left", [f], 1, -1);
+    mk("hero_walk_right", [f], 1, -1);
   }
 
   private heroFrame(dir: "down" | "up" | "left" | "right", step: 0 | 1 | 2) {
-    const cols = Math.max(1, this.kenneyCharCols || 1);
-    const blockCols = Math.max(1, Math.floor(cols / 3));
-    const idx = Math.max(0, this.kenneyHeroIndex);
-    const bx = idx % blockCols;
-    const by = Math.floor(idx / blockCols);
-    const dirRow =
-      dir === "down" ? 0 : dir === "left" ? 1 : dir === "right" ? 2 : 3;
-    const col = bx * 3 + step;
-    const row = by * 4 + dirRow;
-    return row * cols + col;
+    void dir;
+    void step;
+    return Math.max(0, this.kenneyHeroFrame);
   }
 
   private updateHeroAnim(vx: number, vy: number) {
-    if (!this.textures.exists("kenney_char")) return;
+    if (
+      !this.textures.exists("kenney_char") &&
+      !this.textures.exists("warrior_sheet")
+    )
+      return;
+    if (this.attackAnimMs > 0 && this.anims.exists("hero_attack")) return;
     const moving = Math.abs(vx) + Math.abs(vy) > 0.001;
     if (moving) {
       if (Math.abs(vx) > Math.abs(vy))
         this.heroDir = vx >= 0 ? "right" : "left";
       else this.heroDir = vy >= 0 ? "down" : "up";
     }
-    const key = `hero_${moving ? "walk" : "idle"}_${this.heroDir}`;
+    const key = `hero_${moving ? "run" : "idle"}_${this.heroDir}`;
     if (!this.anims.exists(key)) return;
-    const cur = this.playerCircle.anims.currentAnim?.key;
-    if (cur !== key) this.playerCircle.anims.play(key, true);
+    const sprites = [
+      this.playerCircle,
+      ...Object.values(this.heroLayers).filter(Boolean),
+    ] as Phaser.GameObjects.Sprite[];
+    for (const s of sprites) {
+      const cur = s.anims.currentAnim?.key;
+      if (cur !== key) s.anims.play(key, true);
+    }
+  }
+  private createHeroLayers() {
+    if (!this.textures.exists("kenney_char")) return;
+    for (const k of this.heroLayerOrder) {
+      if (this.heroLayers[k]) continue;
+      const s = this.add.sprite(
+        this.playerCircle.x,
+        this.playerCircle.y,
+        "kenney_char",
+        this.heroFrame("down", 1)
+      );
+      s.setDepth(
+        this.playerCircle.depth +
+          (k === "armor" ? 1 : k === "helmet" ? 2 : k === "weapon" ? 3 : 4)
+      );
+      s.setScale(this.playerCircle.scaleX, this.playerCircle.scaleY);
+      s.setVisible(false);
+      s.setAlpha(0);
+      this.heroLayers[k] = s;
+    }
+  }
+
+  private refreshHeroAppearance() {
+    if (!this.textures.exists("kenney_char")) return;
+    const toTint = (hex: string) =>
+      Phaser.Display.Color.HexStringToColor(hex).color;
+    const bySlot = this.save.equipment;
+    const armor = bySlot.armor;
+    const helmet = bySlot.helmet;
+    const weapon = bySlot.weapon;
+    const accessory = bySlot.accessory;
+
+    const armorS = this.heroLayers.armor;
+    if (armorS) {
+      if (armor) {
+        armorS.setVisible(true);
+        armorS.setTint(toTint(rarityColor(armor.rarity)));
+        armorS.setAlpha(0.28 + Math.min(0.18, armor.enhanceLevel * 0.03));
+      } else {
+        armorS.setVisible(false);
+      }
+    }
+
+    const helmetS = this.heroLayers.helmet;
+    if (helmetS) {
+      if (helmet) {
+        helmetS.setVisible(true);
+        helmetS.setTint(toTint(rarityColor(helmet.rarity)));
+        helmetS.setAlpha(0.22 + Math.min(0.16, helmet.enhanceLevel * 0.03));
+      } else {
+        helmetS.setVisible(false);
+      }
+    }
+
+    const weaponS = this.heroLayers.weapon;
+    if (weaponS) {
+      if (weapon) {
+        weaponS.setVisible(true);
+        weaponS.setTint(toTint(rarityColor(weapon.rarity)));
+        weaponS.setBlendMode(Phaser.BlendModes.ADD);
+        weaponS.setAlpha(0.18 + Math.min(0.22, weapon.enhanceLevel * 0.04));
+      } else {
+        weaponS.setVisible(false);
+      }
+    }
+
+    const accS = this.heroLayers.accessory;
+    if (accS) {
+      if (accessory) {
+        accS.setVisible(true);
+        accS.setTint(toTint(rarityColor(accessory.rarity)));
+        accS.setBlendMode(Phaser.BlendModes.ADD);
+        accS.setAlpha(0.12 + Math.min(0.18, accessory.enhanceLevel * 0.03));
+      } else {
+        accS.setVisible(false);
+      }
+    }
+
+    this.syncHeroLayersTransform();
+  }
+
+  private syncHeroLayersTransform() {
+    for (const s of Object.values(this.heroLayers)) {
+      if (!s || !s.visible) continue;
+      s.setPosition(this.playerCircle.x, this.playerCircle.y);
+      s.setScale(this.playerCircle.scaleX, this.playerCircle.scaleY);
+    }
   }
 
   private ensureActorTextures() {
-    if (
-      this.textures.exists("player") &&
-      this.textures.exists("enemy") &&
-      this.textures.exists("enemy_elite")
-    )
+    if (this.textures.exists("player") && this.textures.exists("enemy_elite"))
       return;
 
     const make = (
@@ -363,6 +487,7 @@ export class BattleScene extends Phaser.Scene {
 
   update(_time: number, deltaMs: number) {
     const dt = Math.min(50, deltaMs);
+    this.attackAnimMs = Math.max(0, this.attackAnimMs - dt);
     this.updatePlayer(dt);
     this.updateEnemies(dt);
     this.updateSpawns(dt);
@@ -434,50 +559,37 @@ export class BattleScene extends Phaser.Scene {
 
   private updatePlayer(dt: number) {
     if (this.overlay) return;
+    if (this.dashLockMs > 0) {
+      this.dashLockMs = Math.max(0, this.dashLockMs - dt);
+      return;
+    }
 
     const speed = 190;
     let vx = 0;
-    let vy = 0;
-    if (this.keys.W.isDown) vy -= 1;
-    if (this.keys.S.isDown) vy += 1;
     if (this.keys.A.isDown) vx -= 1;
     if (this.keys.D.isDown) vx += 1;
-    const len = Math.hypot(vx, vy);
-    if (len > 0) {
-      vx /= len;
-      vy /= len;
+    if (Math.abs(vx) > 0.001) {
+      vx = Math.sign(vx);
     } else {
       const target = this.findNearestEnemy();
       if (target) {
         const dx = target.sprite.x - this.playerCircle.x;
-        const dy = target.sprite.y - this.playerCircle.y;
-        const dist = Math.max(0.001, Math.hypot(dx, dy));
         const desiredDist = 24;
-        if (dist > desiredDist) {
-          vx = dx / dist;
-          vy = dy / dist;
-        }
+        if (Math.abs(dx) > desiredDist) vx = dx > 0 ? 1 : -1;
       }
     }
 
-    const { width, height } = this.scale;
-    const boundW = this.mapW > 0 ? this.mapW : width;
-    const boundH = this.mapH > 0 ? this.mapH : height;
+    const { width } = this.scale;
+    const boundW =
+      this.mapW > 0 ? Math.min(this.mapW, width * 0.5) : width * 0.5;
     const pad = 10 * this.playerBaseScale;
-    const nx = Phaser.Math.Clamp(
-      this.playerCircle.x + vx * speed * (dt / 1000),
-      pad,
-      boundW - pad
-    );
-    const ny = Phaser.Math.Clamp(
-      this.playerCircle.y + vy * speed * (dt / 1000),
-      pad,
-      boundH - pad
-    );
-    this.playerCircle.setPosition(nx, ny);
-    this.updateHeroAnim(vx, vy);
+    const nextX = this.playerCircle.x + vx * speed * (dt / 1000);
+    const nx = Phaser.Math.Clamp(nextX, pad, boundW - pad);
+    const hitMidline = nextX >= boundW - pad && vx > 0;
+    this.playerCircle.setPosition(nx, this.laneY);
+    this.updateHeroAnim(hitMidline ? 0 : vx, 0);
     this.playerAnimT += dt;
-    const moving = Math.abs(vx) + Math.abs(vy) > 0.0001;
+    const moving = Math.abs(vx) > 0.0001;
     const bob =
       Math.sin(this.playerAnimT * (moving ? 0.03 : 0.015)) *
       (moving ? 0.06 : 0.03);
@@ -487,20 +599,22 @@ export class BattleScene extends Phaser.Scene {
       this.playerBaseScale * scaleX,
       this.playerBaseScale * scaleY
     );
+    this.syncHeroLayersTransform();
   }
 
   private updateEnemies(dt: number) {
     if (this.overlay) return;
 
     for (const e of this.enemies) {
-      const dx = this.playerCircle.x - e.sprite.x;
-      const dy = this.playerCircle.y - e.sprite.y;
-      const dist = Math.max(0.001, Math.hypot(dx, dy));
-      const ux = dx / dist;
-      const uy = dy / dist;
       const step = e.speed * (dt / 1000);
-      e.sprite.x += ux * step;
-      e.sprite.y += uy * step;
+      const dx = this.playerCircle.x - e.sprite.x;
+      const stopDist = 24;
+      if (dx < -stopDist) {
+        e.sprite.x -= step;
+      } else if (dx > stopDist) {
+        e.sprite.x += step;
+      }
+      e.sprite.y = this.laneY;
       e.attackCooldownMs = Math.max(0, e.attackCooldownMs - dt);
       this.updateEnemyHpBar(e);
     }
@@ -524,7 +638,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateCombat(dt: number) {
     if (this.overlay) return;
-    if (this.enemies.length <= 0 && this.kills >= this.killsNeeded) {
+    if (this.kills >= this.killsNeeded) {
       this.openStageClearOverlay();
       return;
     }
@@ -532,31 +646,58 @@ export class BattleScene extends Phaser.Scene {
     const derived = computeDerivedPlayerStats(this.save);
     this.playerAttackCdMs = Math.max(0, this.playerAttackCdMs - dt);
     this.updateSkillCasting(dt, derived);
+    if (this.kills >= this.killsNeeded) {
+      this.openStageClearOverlay();
+      return;
+    }
 
     if (this.playerAttackCdMs <= 0) {
       this.playerAttack(derived);
       this.playerAttackCdMs = derived.attackIntervalMs;
     }
+    if (this.kills >= this.killsNeeded) {
+      this.openStageClearOverlay();
+      return;
+    }
 
-    for (const e of this.enemies) {
-      const dist = Phaser.Math.Distance.Between(
-        e.sprite.x,
-        e.sprite.y,
-        this.playerCircle.x,
-        this.playerCircle.y
-      );
-      if (dist > 22) continue;
+    for (const e of [...this.enemies]) {
+      const dist = Math.abs(e.sprite.x - this.playerCircle.x);
+      if (dist > 26) continue;
       if (e.attackCooldownMs > 0) continue;
       e.attackCooldownMs = 820;
       const raw = e.atk;
       const dmg = damageAfterDefense(raw, derived.def);
       this.playerHp -= dmg;
+      this.pushCombatLog(`受伤：${Math.floor(dmg)}`);
       this.spawnFloatText(
         this.playerCircle.x,
         this.playerCircle.y - 18,
         `-${Math.floor(dmg)}`,
         "#fca5a5"
       );
+      if (derived.thornsPct > 0 && dmg > 0.01 && e.hp > 0) {
+        const reflectRaw = dmg * derived.thornsPct;
+        const reflect = damageAfterDefense(reflectRaw, e.def);
+        if (reflect > 0.01) {
+          e.hp -= reflect;
+          this.spawnFloatText(
+            e.sprite.x,
+            e.sprite.y - 16,
+            `↩${Math.floor(reflect)}`,
+            "#c4b5fd"
+          );
+          this.pushCombatLog(
+            `荆棘反弹：${Math.floor(reflect)}（${(
+              derived.thornsPct * 100
+            ).toFixed(1)}%）`
+          );
+          if (e.hp <= 0) this.killEnemy(e);
+        }
+      }
+      if (this.kills >= this.killsNeeded) {
+        this.openStageClearOverlay();
+        return;
+      }
       if (this.playerHp <= 0) {
         this.playerHp = 0;
         this.openDefeatOverlay();
@@ -585,7 +726,7 @@ export class BattleScene extends Phaser.Scene {
     const meleeRange = 26;
     if (bestDist > meleeRange) return;
 
-    this.playPlayerAttackAnim();
+    this.playPlayerAttackAnim(derived.attackIntervalMs);
     const crit = this.rng.next() < derived.critChance;
     const raw = derived.atk * (crit ? derived.critDamage : 1);
     const dmg = damageAfterDefense(raw, best.def);
@@ -597,7 +738,8 @@ export class BattleScene extends Phaser.Scene {
       `${crit ? "暴 " : ""}${Math.floor(dmg)}`,
       crit ? "#fde68a" : "#e2e8f0"
     );
-    this.applyLifeSteal(derived, dmg);
+    this.pushCombatLog(`普攻：${Math.floor(dmg)}${crit ? "（暴击）" : ""}`);
+    this.applyLifeSteal(derived, dmg, "普攻");
     if (best.hp <= 0) {
       this.killEnemy(best);
     }
@@ -690,9 +832,11 @@ export class BattleScene extends Phaser.Scene {
       onComplete: () => ring.destroy(),
     });
 
+    let total = 0;
     for (const e of hit) {
       const dmg = damageAfterDefense(raw, e.def);
       e.hp -= dmg;
+      total += dmg;
       this.flashEnemy(e);
       this.spawnFloatText(
         e.sprite.x,
@@ -700,8 +844,9 @@ export class BattleScene extends Phaser.Scene {
         `${Math.floor(dmg)}`,
         "#93c5fd"
       );
-      this.applyLifeSteal(derived, dmg * 0.35);
+      this.applyLifeSteal(derived, dmg * 0.35, "旋风斩");
     }
+    this.pushCombatLog(`旋风斩：命中${hit.length} 伤害${Math.floor(total)}`);
     for (const e of [...hit]) {
       if (e.hp <= 0) this.killEnemy(e);
     }
@@ -714,55 +859,100 @@ export class BattleScene extends Phaser.Scene {
     const branch = skillBranch(this.save, "chain_lightning");
     const p = chainLightningParams(lv, branch);
 
-    const start = this.findNearestEnemy();
-    if (!start) return;
+    const target = this.findNearestEnemyTo(
+      this.playerCircle.x,
+      this.playerCircle.y,
+      p.dashRange,
+      new Set()
+    );
+    if (!target) return;
 
-    const hitIds = new Set<string>();
-    const chain: Enemy[] = [];
-    let current: Enemy | undefined = start;
-    while (current && chain.length < p.bounces) {
-      chain.push(current);
-      hitIds.add(current.id);
-      current = this.findNearestEnemyTo(
-        current.sprite.x,
-        current.sprite.y,
-        p.range,
-        hitIds
-      );
-    }
+    const dx = target.sprite.x - this.playerCircle.x;
+    const dy = target.sprite.y - this.playerCircle.y;
+    const dist = Math.max(0.001, Math.hypot(dx, dy));
+    const ux = dx / dist;
+    const uy = dy / dist;
+    if (Math.abs(dx) > Math.abs(dy)) this.heroDir = dx >= 0 ? "right" : "left";
+    else this.heroDir = dy >= 0 ? "down" : "up";
 
-    const g = this.add.graphics();
-    g.lineStyle(2, 0xa78bfa, 0.65);
-    g.beginPath();
-    g.moveTo(this.playerCircle.x, this.playerCircle.y);
-    for (const e of chain) {
-      g.lineTo(e.sprite.x, e.sprite.y);
-    }
-    g.strokePath();
+    const stopDist = 24;
+    const { width } = this.scale;
+    const boundW = this.mapW > 0 ? this.mapW : width;
+    const pad = 10 * this.playerBaseScale;
+    const destX = Phaser.Math.Clamp(
+      target.sprite.x - ux * stopDist,
+      pad,
+      boundW - pad
+    );
+    const destY = this.laneY;
+
+    this.dashLockMs = Math.max(this.dashLockMs, 240);
+    const dashTargets = [
+      this.playerCircle,
+      ...Object.values(this.heroLayers).filter(Boolean),
+    ] as Phaser.GameObjects.Sprite[];
     this.tweens.add({
-      targets: g,
-      alpha: 0,
-      duration: 260,
-      onComplete: () => g.destroy(),
-    });
+      targets: dashTargets,
+      x: destX,
+      y: destY,
+      duration: 140,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        const cx = this.playerCircle.x;
+        const cy = this.playerCircle.y;
+        const ang = Math.atan2(uy, ux);
+        const g = this.add.graphics();
+        g.fillStyle(0xfbbf24, 0.14);
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.arc(cx, cy, p.radius, ang - Math.PI / 2, ang + Math.PI / 2, false);
+        g.closePath();
+        g.fillPath();
+        this.tweens.add({
+          targets: g,
+          alpha: 0,
+          duration: 240,
+          onComplete: () => g.destroy(),
+        });
 
-    for (const e of chain) {
-      let dmgRaw = derived.atk * p.coef;
-      if (branch === "shock" && e.isElite) dmgRaw *= p.eliteMult;
-      const dmg = damageAfterDefense(dmgRaw, e.def);
-      e.hp -= dmg;
-      this.flashEnemy(e);
-      this.spawnFloatText(
-        e.sprite.x,
-        e.sprite.y - 16,
-        `${Math.floor(dmg)}`,
-        "#c4b5fd"
-      );
-      this.applyLifeSteal(derived, dmg * 0.22);
-    }
-    for (const e of [...chain]) {
-      if (e.hp <= 0) this.killEnemy(e);
-    }
+        const hit: Enemy[] = [];
+        for (const e of this.enemies) {
+          if (e.hp <= 0) continue;
+          const ex = e.sprite.x - cx;
+          const ey = e.sprite.y - cy;
+          const ed = Math.hypot(ex, ey);
+          if (ed > p.radius) continue;
+          const dot =
+            (ex / Math.max(0.001, ed)) * ux + (ey / Math.max(0.001, ed)) * uy;
+          if (dot < 0) continue;
+          hit.push(e);
+        }
+        if (hit.length <= 0) return;
+
+        let total = 0;
+        for (const e of hit) {
+          let dmgRaw = derived.atk * p.coef;
+          if (branch === "shock" && e.isElite) dmgRaw *= p.eliteMult;
+          const dmg = damageAfterDefense(dmgRaw, e.def);
+          e.hp -= dmg;
+          total += dmg;
+          this.flashEnemy(e);
+          this.spawnFloatText(
+            e.sprite.x,
+            e.sprite.y - 16,
+            `${Math.floor(dmg)}`,
+            "#fde68a"
+          );
+          this.applyLifeSteal(derived, dmg * 0.22, "天神下凡");
+        }
+        this.pushCombatLog(
+          `天神下凡：命中${hit.length} 伤害${Math.floor(total)}`
+        );
+        for (const e of [...hit]) {
+          if (e.hp <= 0) this.killEnemy(e);
+        }
+      },
+    });
   }
 
   private castMeteorSkill(
@@ -797,9 +987,11 @@ export class BattleScene extends Phaser.Scene {
       onComplete: () => ring.destroy(),
     });
 
+    let total = 0;
     for (const e of targets) {
       const dmg = damageAfterDefense(raw, e.def);
       e.hp -= dmg;
+      total += dmg;
       this.flashEnemy(e);
       this.spawnFloatText(
         e.sprite.x,
@@ -807,8 +999,9 @@ export class BattleScene extends Phaser.Scene {
         `${Math.floor(dmg)}`,
         "#fdba74"
       );
-      this.applyLifeSteal(derived, dmg * 0.18);
+      this.applyLifeSteal(derived, dmg * 0.18, "陨星");
     }
+    this.pushCombatLog(`陨星：命中${targets.length} 伤害${Math.floor(total)}`);
     for (const e of [...targets]) {
       if (e.hp <= 0) this.killEnemy(e);
     }
@@ -826,9 +1019,11 @@ export class BattleScene extends Phaser.Scene {
               this.playerCircle.y
             ) <= p.radius
         );
+        let burnTotal = 0;
         for (const e of laterTargets) {
           const dmg = damageAfterDefense(tickRaw, e.def);
           e.hp -= dmg;
+          burnTotal += dmg;
           this.flashEnemy(e);
           this.spawnFloatText(
             e.sprite.x,
@@ -836,7 +1031,12 @@ export class BattleScene extends Phaser.Scene {
             `${Math.floor(dmg)}`,
             "#fb923c"
           );
-          this.applyLifeSteal(derived, dmg * 0.1);
+          this.applyLifeSteal(derived, dmg * 0.1, "陨星灼烧");
+        }
+        if (laterTargets.length > 0) {
+          this.pushCombatLog(
+            `陨星灼烧：命中${laterTargets.length} 伤害${Math.floor(burnTotal)}`
+          );
         }
         for (const e of [...laterTargets]) {
           if (e.hp <= 0) this.killEnemy(e);
@@ -873,7 +1073,40 @@ export class BattleScene extends Phaser.Scene {
     return best;
   }
 
-  private playPlayerAttackAnim() {
+  private playPlayerAttackAnim(attackIntervalMs?: number) {
+    const sprites = [
+      this.playerCircle,
+      ...Object.values(this.heroLayers).filter(Boolean),
+    ] as Phaser.GameObjects.Sprite[];
+    if (
+      this.textures.exists("warrior_sheet") &&
+      this.anims.exists("hero_attack")
+    ) {
+      const anim = this.anims.get("hero_attack");
+      const frames = anim?.frames.length ?? 6;
+      if (attackIntervalMs && attackIntervalMs > 0) {
+        const desiredDuration = Math.max(120, attackIntervalMs * 0.85);
+        const frameRate = Phaser.Math.Clamp(
+          frames / (desiredDuration / 1000),
+          6,
+          30
+        );
+        this.attackAnimMs = Math.max(this.attackAnimMs, desiredDuration);
+        for (const s of sprites) {
+          s.anims.play({ key: "hero_attack", frameRate, repeat: 0 }, true);
+        }
+        return;
+      }
+      const frameRate = anim?.frameRate ?? 12;
+      this.attackAnimMs = Math.max(
+        this.attackAnimMs,
+        (frames / frameRate) * 1000
+      );
+      for (const s of sprites) {
+        s.anims.play("hero_attack", true);
+      }
+      return;
+    }
     const dx = this.heroDir === "left" ? -1 : this.heroDir === "right" ? 1 : 0;
     const dy = this.heroDir === "up" ? -1 : this.heroDir === "down" ? 1 : 0;
     this.tweens.killTweensOf(this.playerCircle);
@@ -900,12 +1133,23 @@ export class BattleScene extends Phaser.Scene {
 
   private applyLifeSteal(
     derived: ReturnType<typeof computeDerivedPlayerStats>,
-    dmgDealt: number
+    dmgDealt: number,
+    source: string
   ) {
     if (derived.lifeStealPct <= 0) return;
     const heal = dmgDealt * derived.lifeStealPct;
     if (heal <= 0.01) return;
+    const before = this.playerHp;
     this.playerHp = Math.min(derived.hpMax, this.playerHp + heal);
+    const actual = this.playerHp - before;
+    if (actual <= 0.01) return;
+    this.spawnFloatText(
+      this.playerCircle.x,
+      this.playerCircle.y - 24,
+      `+${Math.floor(actual)}`,
+      "#86efac"
+    );
+    this.pushCombatLog(`吸血：+${Math.floor(actual)}（${source}）`);
   }
 
   private killEnemy(enemy: Enemy) {
@@ -964,7 +1208,7 @@ export class BattleScene extends Phaser.Scene {
       );
     }
 
-    if (this.kills >= this.killsNeeded && this.enemies.length <= 0) {
+    if (this.kills >= this.killsNeeded) {
       this.openStageClearOverlay();
     }
   }
@@ -976,6 +1220,7 @@ export class BattleScene extends Phaser.Scene {
       if (current) this.save.inventory.push(current);
       this.removeFromInventoryById(item.id);
       persistSave(this.save);
+      this.refreshHeroAppearance();
       return item;
     }
     persistSave(this.save);
@@ -1018,15 +1263,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private spawnEnemy() {
-    const { width, height } = this.scale;
-    const areaW = this.mapW > 0 ? this.mapW : width;
-    const areaH = this.mapH > 0 ? this.mapH : height;
-    const edge = this.rng.int(0, 3);
+    const { width } = this.scale;
     const pad = 10;
-    const x =
-      edge === 0 ? -pad : edge === 1 ? areaW + pad : this.rng.int(0, areaW);
-    const y =
-      edge === 2 ? -pad : edge === 3 ? areaH + pad : this.rng.int(0, areaH);
+    const camRight = this.cameras.main.scrollX + width;
+    const x = camRight - pad;
+    const y = this.laneY;
 
     const stage = this.save.stage;
     const isElite = this.rng.chance(0.08 + Math.min(0.12, stage * 0.0006));
@@ -1101,7 +1342,17 @@ export class BattleScene extends Phaser.Scene {
     this.activeCooldownMs = [900, 1400, 2000];
     this.ultimateCooldownMs = 6500;
     this.lastDropText = "";
+    this.combatLog = [];
+    this.attackAnimMs = 0;
+    this.dashLockMs = 0;
+    if (this.playerCircle) {
+      this.playerCircle.setPosition(this.heroStartX, this.laneY);
+      this.playerCircle.setScale(this.playerBaseScale);
+      this.updateHeroAnim(0, 0);
+      this.syncHeroLayersTransform();
+    }
     persistSave(this.save);
+    this.refreshHeroAppearance();
     this.updatePlayerHpBar();
   }
 
@@ -1459,6 +1710,7 @@ export class BattleScene extends Phaser.Scene {
       if (equipped) this.save.inventory.push(equipped);
       this.trimInventory();
       persistSave(this.save);
+      this.refreshHeroAppearance();
       selectedId = item.id;
       selectedSource = "equip";
       refresh();
@@ -1475,6 +1727,7 @@ export class BattleScene extends Phaser.Scene {
       this.save.essence -= cost.essence;
       applyEnhance(item);
       persistSave(this.save);
+      this.refreshHeroAppearance();
       refresh();
     });
 
@@ -1491,6 +1744,7 @@ export class BattleScene extends Phaser.Scene {
       this.save.reforgeStone -= cost.reforgeStone;
       applyReforge(this.rng, item);
       persistSave(this.save);
+      this.refreshHeroAppearance();
       refresh();
     });
 
@@ -2078,6 +2332,7 @@ export class BattleScene extends Phaser.Scene {
         derived.lifeStealPct > 0
           ? `吸血：${(derived.lifeStealPct * 100).toFixed(1)}%`
           : "",
+        `荆棘：${(derived.thornsPct * 100).toFixed(1)}%`,
       ]
         .filter(Boolean)
         .join("\n")
@@ -2086,7 +2341,9 @@ export class BattleScene extends Phaser.Scene {
     this.uiBottom.setText(
       [
         this.lastDropText || "击杀掉落会进背包；更强的同槽位装备会自动替换",
+        "提示：荆棘=受击反弹（受伤×荆棘%），可由装备词缀/被动技能提升",
         "提示：停留刷关会有收益衰减，推进关卡掉落/经验更高",
+        ...this.combatLog.slice(0, 4),
       ].join("\n")
     );
   }

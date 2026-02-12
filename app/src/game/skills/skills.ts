@@ -46,12 +46,14 @@ export function passiveBonuses(save: PlayerSave) {
   const sharpenLv = skillLevel(save, 'sharpen')
   const vitalityLv = skillLevel(save, 'vitality')
   const precisionLv = skillLevel(save, 'precision')
+  const thornsLv = skillLevel(save, 'thorns')
 
   const atkPct = sharpenLv * 0.03
   const hpPct = vitalityLv * 0.05
   const critChance = precisionLv * 0.01
+  const thornsPct = thornsLv * 0.01
 
-  return { atkPct, hpPct, critChance }
+  return { atkPct, hpPct, critChance, thornsPct }
 }
 
 export type { SkillDef } from './types'

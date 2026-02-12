@@ -9,6 +9,7 @@ export interface DerivedPlayerStats {
   critChance: number
   critDamage: number
   lifeStealPct: number
+  thornsPct: number
 }
 
 function addInto(dst: Stats, src: Stats) {
@@ -30,6 +31,7 @@ export function computeDerivedPlayerStats(save: PlayerSave): DerivedPlayerStats 
   const baseAtk = (10 + (lv - 1) * 2) * (1 + bonuses.atkPct) * earlyBoost
   const baseHp = (120 + (lv - 1) * 22) * (1 + bonuses.hpPct) * earlyBoost
   const baseDef = 3 + (lv - 1) * 0.9 + earlyDefFlat
+  const baseThornsPct = 0.05
 
   const total: Stats = {}
   for (const it of Object.values(save.equipment)) {
@@ -53,7 +55,13 @@ export function computeDerivedPlayerStats(save: PlayerSave): DerivedPlayerStats 
     0.25
   )
 
-  return { atk, hpMax, def, attackIntervalMs, critChance, critDamage, lifeStealPct }
+  const thornsPct = clamp(
+    baseThornsPct + (bonuses.thornsPct ?? 0) + (total.thornsPct ?? 0),
+    0,
+    0.6
+  )
+
+  return { atk, hpMax, def, attackIntervalMs, critChance, critDamage, lifeStealPct, thornsPct }
 }
 
 function clamp(v: number, min: number, max: number) {

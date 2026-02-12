@@ -118,6 +118,8 @@ export class BattleScene extends Phaser.Scene {
   private recoveryTickerMs = 0;
   private stageAtkSpeedMult = 1;
   private stageCritBonus = 0;
+  private isDefeated = false;
+  private activeCastLockMs = 0;
 
   private keys!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
 
@@ -312,6 +314,16 @@ export class BattleScene extends Phaser.Scene {
       const attack1 = range(176, 8);
       const attack2 = range(80, 6);
       const attack3 = range(198, 10);
+      const tex = this.textures.get("warrior_sheet");
+      const src: any = tex.getSourceImage();
+      const cols = Math.max(1, Math.floor((src?.width ?? 0) / 80));
+      const rows = Math.max(1, Math.floor((src?.height ?? 0) / 64));
+      const defeatRowStart = Math.max(0, (rows - 2) * cols);
+      const defeat = range(defeatRowStart, Math.min(7, cols));
+      const attack0Start = Math.max(0, (12 - 1) * cols);
+      const attack0 = range(attack0Start, 8);
+      const chargeStart = Math.max(0, (17 - 1) * cols);
+      const chargeFrames = range(chargeStart, 10);
       const mk = (
         key: string,
         frames: number[],
@@ -333,22 +345,29 @@ export class BattleScene extends Phaser.Scene {
       mk("hero_run_up", run, 14, -1);
       mk("hero_run_left", run, 14, -1);
       mk("hero_run_right", run, 14, -1);
+      mk("hero_attack0", attack0, 12, 0);
       mk("hero_attack1", attack1, 12, 0);
       mk("hero_attack2", attack2, 12, 0);
       mk("hero_attack3", attack3, 12, 0);
+      mk("hero_charge", chargeFrames, 16, 0);
+      mk("hero_defeat", defeat, 10, 0);
       return;
     }
   }
 
   private updateHeroAnim(vx: number, vy: number) {
     if (!this.textures.exists("warrior_sheet")) return;
+    if (this.isDefeated) return;
     if (
       this.attackAnimMs > 0 &&
-      (this.anims.exists("hero_attack1") ||
+      (this.anims.exists("hero_attack0") ||
+        this.anims.exists("hero_attack1") ||
         this.anims.exists("hero_attack2") ||
-        this.anims.exists("hero_attack3"))
-    )
+        this.anims.exists("hero_attack3") ||
+        this.anims.exists("hero_charge"))
+    ) {
       return;
+    }
     const moving = Math.abs(vx) + Math.abs(vy) > 0.001;
     if (moving && Math.abs(vx) > 0.001) {
       this.heroDir = vx >= 0 ? "right" : "left";
@@ -511,8 +530,7 @@ export class BattleScene extends Phaser.Scene {
     this.updateHeroAnim(vx, 0);
     this.playerAnimT += dt;
     if (this.attackAnimMs <= 0) {
-      const targetScale =
-        this.berserkMs > 0 ? this.playerBaseScale * 1.5 : this.playerBaseScale;
+      const targetScale = this.playerBaseScale;
       this.playerCircle.setScale(targetScale);
     }
   }
@@ -733,6 +751,7 @@ export class BattleScene extends Phaser.Scene {
     dt: number,
     derived: ReturnType<typeof computeDerivedPlayerStats>
   ) {
+    this.activeCastLockMs = Math.max(0, this.activeCastLockMs - dt);
     const wasBerserk = this.berserkMs > 0;
     this.berserkMs = Math.max(0, this.berserkMs - dt);
     if (wasBerserk && this.berserkMs <= 0) {
@@ -762,15 +781,18 @@ export class BattleScene extends Phaser.Scene {
         this.recoveryTickerMs = 0;
       }
     }
+    const locked =
+      this.attackAnimMs > 0 || this.dashLockMs > 0 || this.activeCastLockMs > 0;
+    let casted = false;
     for (let i = 0; i < this.activeCooldownMs.length; i++) {
       this.activeCooldownMs[i] = Math.max(0, this.activeCooldownMs[i] - dt);
+      if (locked || casted) continue;
       const id = this.save.skills.equippedActives[i];
       if (!id) continue;
       const lv = skillLevel(this.save, id);
       if (lv <= 0) continue;
       if (this.activeCooldownMs[i] > 0) continue;
       if (this.enemies.length <= 0) break;
-      // 近战范围判断
       let inMelee = false;
       const meleeRange = 26;
       for (const e of this.enemies) {
@@ -783,6 +805,8 @@ export class BattleScene extends Phaser.Scene {
       if (!inMelee) continue;
       this.castActiveSkill(id, lv, derived);
       this.activeCooldownMs[i] = skillCooldownMs(id, lv);
+      this.activeCastLockMs = Math.max(this.activeCastLockMs, 300);
+      casted = true;
     }
   }
 
@@ -885,7 +909,7 @@ export class BattleScene extends Phaser.Scene {
     const { durationMs, lifeStealBonusPct } = berserkParams(lv);
     this.berserkMs = Math.max(this.berserkMs, durationMs);
     this.berserkLifeStealBonusPct = lifeStealBonusPct;
-    this.playerCircle.setScale(this.playerBaseScale * 1.5);
+    this.playerCircle.setScale(this.playerBaseScale);
     if (this.berserkPulse) {
       this.berserkPulse.remove(false);
       this.berserkPulse = undefined;
@@ -1089,7 +1113,6 @@ export class BattleScene extends Phaser.Scene {
     const { width } = this.scale;
     const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
-    const startX = this.playerCircle.x;
     const viewRight = this.cameras.main.scrollX + this.cameras.main.width;
     const endX = Math.min(boundW, viewRight) - pad - 20;
 
@@ -1098,25 +1121,27 @@ export class BattleScene extends Phaser.Scene {
       this.activeCooldownMs[i] = Math.max(this.activeCooldownMs[i], 1000);
     }
 
+    if (this.anims.exists("hero_charge")) {
+      const anim = this.anims.get("hero_charge");
+      const frames = anim?.frames.length ?? 10;
+      const frameRate = anim?.frameRate ?? 16;
+      const duration = Math.max(260, (frames / frameRate) * 1000);
+      this.attackAnimMs = Math.max(this.attackAnimMs, duration);
+      this.playerCircle.anims.play(
+        { key: "hero_charge", frameRate, repeat: 0 },
+        true
+      );
+    }
     this.tweens.add({
       targets: this.playerCircle,
       x: endX,
       duration: 300,
       ease: "Cubic.easeIn",
       onComplete: () => {
-        this.dealChargeDamage(derived, p.coef, "冲撞(去)");
-        this.tweens.add({
-          targets: this.playerCircle,
-          x: startX,
-          duration: 300,
-          ease: "Cubic.easeOut",
-          onComplete: () => {
-            this.dealChargeDamage(derived, p.coef, "冲撞(回)");
-            if (resumeFollow) {
-              cam.startFollow(this.playerCircle, true, 0.12, 0.12);
-            }
-          },
-        });
+        this.dealChargeDamage(derived, p.coef, "冲撞");
+        if (resumeFollow) {
+          cam.startFollow(this.playerCircle, true, 0.12, 0.12);
+        }
       },
     });
   }
@@ -1155,14 +1180,16 @@ export class BattleScene extends Phaser.Scene {
         if (e.hp <= 0) this.killEnemy(e);
       }
       // 推至最右侧堆积（不离场、不眩晕）
-      const rightEdge =
+      const viewRight =
         this.cameras.main.scrollX + this.cameras.main.width - 24;
+      const worldRight = (this.mapW > 0 ? this.mapW : this.scale.width) - 24;
+      const rightEdge = Math.min(viewRight, worldRight);
       for (const e of hit) {
         if (!e.sprite.active) continue;
         this.tweens.add({
-          targets: e.sprite,
+          targets: [e.sprite, e.hpBarBg, e.hpBarFill],
           x: rightEdge,
-          duration: 360,
+          duration: 380,
           ease: "Cubic.easeIn",
           onComplete: () => {
             // 保持在右侧边缘，立即恢复正常逻辑
@@ -1202,17 +1229,19 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playPlayerAttackAnim(attackIntervalMs?: number) {
+    const hasAttack0 = this.anims.exists("hero_attack0");
     const hasAttack1 = this.anims.exists("hero_attack1");
     const hasAttack2 = this.anims.exists("hero_attack2");
-    if (this.textures.exists("warrior_sheet") && (hasAttack1 || hasAttack2)) {
-      const key =
-        hasAttack1 && hasAttack2
-          ? this.rng.next() < 0.5
-            ? "hero_attack1"
-            : "hero_attack2"
-          : hasAttack1
-          ? "hero_attack1"
-          : "hero_attack2";
+    if (
+      this.textures.exists("warrior_sheet") &&
+      (hasAttack0 || hasAttack1 || hasAttack2)
+    ) {
+      const choices = [
+        ...(hasAttack0 ? ["hero_attack0"] : []),
+        ...(hasAttack1 ? ["hero_attack1"] : []),
+        ...(hasAttack2 ? ["hero_attack2"] : []),
+      ];
+      const key = choices[Math.floor(this.rng.next() * choices.length)];
       const anim = this.anims.get(key);
       const frames = anim?.frames.length ?? 6;
       if (attackIntervalMs && attackIntervalMs > 0) {
@@ -1571,6 +1600,7 @@ export class BattleScene extends Phaser.Scene {
     this.recoveryTickerMs = 0;
     this.stageAtkSpeedMult = 1;
     this.stageCritBonus = 0;
+    this.isDefeated = false;
     this.berserkMs = 0;
     this.berserkLifeStealBonusPct = 0;
     this.shieldWallMs = 0;
@@ -1802,6 +1832,23 @@ export class BattleScene extends Phaser.Scene {
   private openDefeatOverlay() {
     if (this.overlay) return;
     persistSave(this.save);
+    this.isDefeated = true;
+    if (
+      this.textures.exists("warrior_sheet") &&
+      this.anims.exists("hero_defeat")
+    ) {
+      const anim = this.anims.get("hero_defeat");
+      const frames = anim?.frames.length ?? 7;
+      const durationMs = Math.max(
+        600,
+        (frames / (anim?.frameRate ?? 10)) * 1000
+      );
+      this.playerCircle.anims.play(
+        { key: "hero_defeat", frameRate: 10, repeat: 0 },
+        true
+      );
+      this.attackAnimMs = Math.max(this.attackAnimMs, durationMs);
+    }
 
     const { width, height } = this.scale;
     const bg = this.add.rectangle(
@@ -1991,7 +2038,9 @@ export class BattleScene extends Phaser.Scene {
             return `荆棘 ${th.toFixed(1)}%${tag}`;
           })(),
           derived.recoveryPct > 0
-            ? `恢复 ${(derived.recoveryPct * 100).toFixed(1)}%（每秒，10秒合计）`
+            ? `恢复 ${(derived.recoveryPct * 100).toFixed(
+                1
+              )}%（每秒，10秒合计）`
             : "",
         ]
           .filter(Boolean)

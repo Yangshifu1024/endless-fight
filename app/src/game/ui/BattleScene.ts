@@ -139,8 +139,15 @@ export class BattleScene extends Phaser.Scene {
     );
     this.load.image("town_tiles", "/assets/map/town/town.png");
     this.load.tilemapTiledJSON("town_map", "/assets/map/town/town.json");
-    this.load.image("dungeon1_tiles", "/assets/map/dungeon1/dungeon1.png");
-    this.load.image("dungeon1_platform", "/assets/map/dungeon1/platform1.png");
+    this.load.image(
+      "dungeon1_block1",
+      "/assets/map/dungeon1/platformBlock1.png"
+    );
+    this.load.image("dungeon1_platform1", "/assets/map/dungeon1/platform1.png");
+    this.load.image("dungeon1_exit", "/assets/map/dungeon1/exit.png");
+    this.load.image("dungeon1_sign", "/assets/map/dungeon1/sign.png");
+    this.load.image("dungeon1_torch", "/assets/map/dungeon1/torch.png");
+    this.load.image("dungeon1_window", "/assets/map/dungeon1/window1.png");
     this.load.tilemapTiledJSON(
       "dungeon1_map",
       "/assets/map/dungeon1/dungeon1.json"
@@ -313,32 +320,58 @@ export class BattleScene extends Phaser.Scene {
 
   private createDungeon1Map() {
     if (!this.cache.tilemap.exists("dungeon1_map")) return;
-    if (!this.textures.exists("dungeon1_tiles")) return;
+    if (!this.textures.exists("dungeon1_block1")) return;
     const map = this.make.tilemap({ key: "dungeon1_map" });
     const tileset1 = map.addTilesetImage(
-      "Roguelike",
-      "dungeon1_tiles",
+      "block1",
+      "dungeon1_block1",
       16,
       16,
       0,
-      1
+      0
     );
     const tileset2 = map.addTilesetImage(
       "platform1",
-      "dungeon1_platform",
-      192,
-      64,
+      "dungeon1_platform1",
+      16,
+      16,
       0,
-      1
+      0
+    );
+    const tileset3 = map.addTilesetImage("exit", "dungeon1_exit", 16, 16, 0, 0);
+    const tileset4 = map.addTilesetImage("sign", "dungeon1_sign", 16, 16, 0, 0);
+    const tileset5 = map.addTilesetImage(
+      "torch",
+      "dungeon1_torch",
+      16,
+      16,
+      0,
+      0
+    );
+    const tileset6 = map.addTilesetImage(
+      "window",
+      "dungeon1_window",
+      16,
+      16,
+      0,
+      0
     );
     if (!tileset1) return;
 
     const layerDefs: Array<{ name: string; depth: number }> = [
-      { name: "root", depth: 0 },
+      { name: "Background", depth: 0 },
+      { name: "Road", depth: 1 },
     ];
-    const tilesets = tileset2 ? [tileset1, tileset2] : [tileset1];
+    const allTilesets = [
+      tileset1,
+      tileset2,
+      tileset3,
+      tileset4,
+      tileset5,
+      tileset6,
+    ].filter((t) => t !== null);
     for (const def of layerDefs) {
-      const layer = map.createLayer(def.name, tilesets, 0, 0);
+      const layer = map.createLayer(def.name, allTilesets, 0, 0);
       if (!layer) continue;
       layer.setDepth(def.depth);
     }

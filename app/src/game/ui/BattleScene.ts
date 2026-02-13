@@ -323,6 +323,7 @@ export class BattleScene extends Phaser.Scene {
       const rows = Math.max(1, Math.floor((src?.height ?? 0) / 64));
       const defeatRowStart = Math.max(0, (rows - 2) * cols);
       const defeat = range(defeatRowStart, Math.min(7, cols));
+      const knockback = range(defeatRowStart, Math.min(4, cols));
       const attack0Start = Math.max(0, (12 - 1) * cols);
       const attack0 = range(attack0Start, 8);
       const chargeStart = Math.max(0, (17 - 1) * cols);
@@ -353,6 +354,7 @@ export class BattleScene extends Phaser.Scene {
       mk("hero_attack2", attack2, 12, 0);
       mk("hero_attack3", attack3, 12, 0);
       mk("hero_charge", chargeFrames, 16, 0);
+      mk("hero_knockback", knockback, 12, 0);
       mk("hero_defeat", defeat, 10, 0);
       return;
     }
@@ -695,6 +697,17 @@ export class BattleScene extends Phaser.Scene {
         const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
         if (nx !== this.playerCircle.x) {
           this.playerCircle.setPosition(nx, this.laneY);
+          if (this.anims.exists("hero_knockback")) {
+            const anim = this.anims.get("hero_knockback");
+            const frames = anim?.frames.length ?? 4;
+            const frameRate = anim?.frameRate ?? 12;
+            const duration = Math.max(160, (frames / frameRate) * 1000);
+            this.attackAnimMs = Math.max(this.attackAnimMs, duration);
+            this.playerCircle.anims.play(
+              { key: "hero_knockback", frameRate, repeat: 0 },
+              true
+            );
+          }
         }
         // 蓄力视觉
         const trail = this.add.rectangle(

@@ -85,6 +85,7 @@ export class BattleScene extends Phaser.Scene {
   private spawnedCount = 0;
   private spawnCooldownMs = 0;
   private dashLockMs = 0;
+  private chargeImmuneMs = 0;
 
   private uiLeft!: Phaser.GameObjects.Text;
   private uiRight!: Phaser.GameObjects.Text;
@@ -436,6 +437,7 @@ export class BattleScene extends Phaser.Scene {
   update(_time: number, deltaMs: number) {
     const dt = Math.min(50, deltaMs);
     this.attackAnimMs = Math.max(0, this.attackAnimMs - dt);
+    this.chargeImmuneMs = Math.max(0, this.chargeImmuneMs - dt);
     this.updatePlayer(dt);
     this.updateEnemies(dt);
     this.updateSpawns(dt);
@@ -692,40 +694,41 @@ export class BattleScene extends Phaser.Scene {
         `受伤：${Math.ceil(dmg)}${blocked ? "（格挡）" : ""}`
       );
       if (e.kind === "pusher" || e.kind === "pusher_elite") {
-        const basePush = 14;
-        const push = e.kind === "pusher_elite" ? basePush * 3 : basePush;
-        const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
-        if (nx !== this.playerCircle.x) {
-          this.playerCircle.setPosition(nx, this.laneY);
-          if (this.anims.exists("hero_knockback")) {
-            const anim = this.anims.get("hero_knockback");
-            const frames = anim?.frames.length ?? 4;
-            const frameRate = anim?.frameRate ?? 12;
-            const duration = Math.max(160, (frames / frameRate) * 1000);
-            this.attackAnimMs = Math.max(this.attackAnimMs, duration);
-            this.playerCircle.anims.play(
-              { key: "hero_knockback", frameRate, repeat: 0 },
-              true
-            );
+        if (this.chargeImmuneMs <= 0) {
+          const basePush = 14;
+          const push = e.kind === "pusher_elite" ? basePush * 3 : basePush;
+          const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
+          if (nx !== this.playerCircle.x) {
+            this.playerCircle.setPosition(nx, this.laneY);
+            if (this.anims.exists("hero_knockback")) {
+              const anim = this.anims.get("hero_knockback");
+              const frames = anim?.frames.length ?? 4;
+              const frameRate = anim?.frameRate ?? 12;
+              const duration = Math.max(160, (frames / frameRate) * 1000);
+              this.attackAnimMs = Math.max(this.attackAnimMs, duration);
+              this.playerCircle.anims.play(
+                { key: "hero_knockback", frameRate, repeat: 0 },
+                true
+              );
+            }
           }
+          const trail = this.add.rectangle(
+            e.sprite.x,
+            e.sprite.y,
+            e.kind === "pusher_elite" ? 28 : 20,
+            4,
+            0xf59e0b,
+            0.6
+          );
+          trail.setOrigin(0.5, 0.5);
+          this.tweens.add({
+            targets: trail,
+            x: trail.x - (e.kind === "pusher_elite" ? 80 : 40),
+            alpha: 0,
+            duration: e.kind === "pusher_elite" ? 380 : 220,
+            onComplete: () => trail.destroy(),
+          });
         }
-        // 蓄力视觉
-        const trail = this.add.rectangle(
-          e.sprite.x,
-          e.sprite.y,
-          e.kind === "pusher_elite" ? 28 : 20,
-          4,
-          0xf59e0b,
-          0.6
-        );
-        trail.setOrigin(0.5, 0.5);
-        this.tweens.add({
-          targets: trail,
-          x: trail.x - (e.kind === "pusher_elite" ? 80 : 40),
-          alpha: 0,
-          duration: e.kind === "pusher_elite" ? 380 : 220,
-          onComplete: () => trail.destroy(),
-        });
       }
       this.spawnFloatText(
         this.playerCircle.x,
@@ -1172,8 +1175,8 @@ export class BattleScene extends Phaser.Scene {
     if (this.anims.exists("hero_charge")) {
       const anim = this.anims.get("hero_charge");
       const frames = anim?.frames.length ?? 10;
-      const frameRate = anim?.frameRate ?? 16;
-      const duration = Math.max(260, (frames / frameRate) * 1000);
+      const duration = 300;
+      const frameRate = Math.max(8, Math.round(frames / (duration / 1000)));
       this.attackAnimMs = Math.max(this.attackAnimMs, duration);
       this.playerCircle.anims.play(
         { key: "hero_charge", frameRate, repeat: 0 },
@@ -1190,6 +1193,7 @@ export class BattleScene extends Phaser.Scene {
         // 相机已跟随，无需额外处理
       },
     });
+    this.chargeImmuneMs = Math.max(this.chargeImmuneMs, 320);
   }
 
   private dealChargeDamage(

@@ -153,8 +153,8 @@ export class BattleScene extends Phaser.Scene {
 
     const { width, height } = this.scale;
     this.ensureActorTextures();
-    const stageMod = this.save.stage % 10;
-    if (stageMod === 0 || stageMod === 5) {
+    const stageMod = this.save.stage % 2;
+    if (stageMod === 0) {
       this.createDungeon1Map();
     } else {
       this.createTownMap();
@@ -2671,13 +2671,13 @@ export class BattleScene extends Phaser.Scene {
     this.save.stage = Math.max(1, this.save.stage + step);
     this.save.stageRepeat = 0;
     persistSave(this.save);
-    this.startStage();
+    this.scene.restart();
   }
 
   private repeatStage() {
     this.save.stageRepeat += 1;
     persistSave(this.save);
-    this.startStage();
+    this.scene.restart();
   }
 
   private updateUi() {

@@ -137,14 +137,8 @@ export class BattleScene extends Phaser.Scene {
       "/assets/character/WarriorMan-Sheet.png",
       { frameWidth: 80, frameHeight: 64, margin: 0, spacing: 0 }
     );
-    this.load.image(
-      "kenney_tiles",
-      "/assets/kenney/kenney_roguelike-rpg-pack/Spritesheet/roguelikeSheet_transparent.png"
-    );
-    this.load.tilemapTiledJSON(
-      "kenney_map",
-      "/assets/kenney/kenney_roguelike-rpg-pack/Map/sample_map.json"
-    );
+    this.load.image("town_tiles", "/assets/map/town/town.png");
+    this.load.tilemapTiledJSON("town_map", "/assets/map/town/town.json");
   }
 
   create() {
@@ -276,12 +270,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private createKenneyMap() {
-    if (!this.cache.tilemap.exists("kenney_map")) return;
-    if (!this.textures.exists("kenney_tiles")) return;
-    const map = this.make.tilemap({ key: "kenney_map" });
+    if (!this.cache.tilemap.exists("town_map")) return;
+    if (!this.textures.exists("town_tiles")) return;
+    const map = this.make.tilemap({ key: "town_map" });
     const tileset = map.addTilesetImage(
       "Roguelike",
-      "kenney_tiles",
+      "town_tiles",
       16,
       16,
       0,

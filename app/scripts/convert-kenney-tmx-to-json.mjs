@@ -124,8 +124,7 @@ function convertOne(relTmxPath) {
 }
 
 const targets = [
-  "public/assets/kenney/kenney_roguelike-rpg-pack/Map/sample_map.tmx",
-  "public/assets/kenney/kenney_roguelike-rpg-pack/Map/sample_indoor.tmx",
+  "public/assets/map/town/town.tmx",
 ];
 
 for (const t of targets) {

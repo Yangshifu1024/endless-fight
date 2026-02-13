@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="100" height="60" tilewidth="16" tileheight="16" infinite="0" nextlayerid="6" nextobjectid="1">
+ <tileset firstgid="1" name="Roguelike" tilewidth="16" tileheight="16" spacing="1" tilecount="1767" columns="57">
+  <image source="town.png" width="968" height="526"/>
+ </tileset>
+ <layer id="1" name="Ground/terrain" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJzt100KwjAQgNGA1kOptZfy5/pGEKyhdiXOYN7i7Qc+ZkKmUsoEAAAAAAD8pV0jep6etS000QM9svnUQY9cXaLn6d2m2jaGBHP16liNjVOCuXrR7sNZj1BL+6CHHuiRzePtWHov9Iixthv76vp0SzBrD9Z62Im8PfzVf+NSXjfpUN5vlRsVa74rblW8+a7YDQAAAAAAAAAAAIDvuAPsq7xq
+  </data>
+ </layer>
+ <layer id="2" name="Ground overlay" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJzt1VsKglAUhtGDPnSbVGnjiOZRjaMaVo0oIw+IEEhJ7mAt+N9lfxxMCQAAAAAAxrMoUlq2WxVTfw1V06Butx3Q41KmdO2MceR3UXe2HvBG+j00+U7usOm1GPpG9BhX9aZD3lGPnzq0N5/3OsyanT74f+gxjtwlb0iLJz1i0SMWPWLRIxY9YtEjFj1i0SOOfXP7c3t/PaZ3b26/8z5CuZWvLt0BAAAAAAAAAAAAAPA/HkMHPXw=
+  </data>
+ </layer>
+ <layer id="3" name="Objects" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJztms1qFEEQxzMzuwdPOSmKEKMnHyH6BAEvZhV8AQ1uPPkAIgurqFH0osGr3lV8iERQEbx4VTyob2E300Vqa6o/ZnpBM/P/QdHTPV9L/ae6qmd2ZQUAAAAAAAAAAAAAAACOJlvlv/4F/eBSqbddeKScO2FjL4vu1x4C1vfzUm+JueJjbYyYmn07bP+uR49NxFMDnxbS36GYOSX2vTL916V+DNdjBj0axOKDWi0evpuxH25cxoRvDPNVmFB8aHHig8fEt6I59rWo7QX0CNJFi1AdxffdVfbL+FjFnLWATwNqYzVsak6m46weyON+YnlDHitJzckzpgfyuJ/QXCXXEqm5JEQon78x9tbYu/zbHFlS1h+W0x20eKKcQ3rY68l565ex38b+tL9Vb0jJ5do8daZjrITWH+tm31lj5wZcg6XUVbK/5vpck2fjtPtZPVBT+dHqKoqH2yP/eWstfLphrrNf1dsUH9BER6urtPxBaPPURkA3CdbnYXLX5YSWu3m+Jh1DekxNDN2q2t23b2hzldSC+2li2itu+6prNS0s2jqD9JC+v2zyz7bp3xy4HqHcTXNWqp+uueOfBnK71eN6Cd+nwvPGXnH4HvB9Rv7l71zkfPWzRe4ZGnKuysm9sv46zq75cNy0x4n1ct8JfQf06cGf933zfB8Y++Cec57DSRMeZ1/Yts+GjFZHbYpaSPqcs1MdmiWUw33kfK8fAjOhB/f5gdBm6sZDdWpsDbiM95R9g97larnX+vzBqPb5hXFtF918b+ukG6xW0r5tYA2Yx5aIj2m1GCMyHuxxJ922ja1JJA8dM9qer/wGdMiP90Z1DFi7P1qMB34c6bgb0CP23gpzlx/y40fTfnL2uWg+77EaFvGRz16gNpXjsv9c9O+4Zx7vdLuT8z+QWP5GfLSnS020KuoAH3K9EftvKqh9eiLjXIL72vdfR+pjXegnZ83Az523ePYRG36WpQdYDtDj/wJ69AfoAQAAAAAAAAAAAAAsfwE3ZsFM
+  </data>
+ </layer>
+ <layer id="4" name="Doors/windows/roof" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJzt17EuBEEYB/A5uSvwDBqd3jk1KjQajWcgGlqN3ltwPAYJLQ9Br0bi20Tkwt3tXW7Obs7vl0yymS1m8v929ttNCQAAAAAAAAAmtxVjsepN8G2lkdJr1ZuACS3NVb0Deu2rB/DPPTZTempWvYv6u42M7jLn9DP7+7ieb6W00Mq7ziw6jozeM9ejyP6sJ/v1uN6IsakepVYjo3bmnPplfxL/g6eNvOvMmpvI5znGi5xqac+/R60Vvf5hCv2ewYZl/lbMjdDvD52rbIZlXvT6j2Z5v79Uj2zKMt8ds9cfRW3W1GdqDvrMXQzJ+yrudXvud9VmbNt/9L27ozZjZ7A84XqdWO/6a822d9cv5zXJw9mYrkH5dgbM1+W5mFVl+farlzNSHecBAAAAAAAARvcJJUklqQ==
+  </data>
+ </layer>
+ <layer id="5" name="Roof object" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJztzgENAAAIA6CbyP7tjKGbkIAEAAAAAAAAAAAAAG7q2h4AAAAAAAAAAAAAAADwzQDmBgAx
+  </data>
+ </layer>
+</map>

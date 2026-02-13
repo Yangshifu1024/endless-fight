@@ -133,7 +133,7 @@ export class BattleScene extends Phaser.Scene {
 
   preload() {
     this.load.spritesheet(
-      "warrior_sheet",
+      "swordman",
       "/assets/character/WarriorMan-Sheet.png",
       { frameWidth: 80, frameHeight: 64, margin: 0, spacing: 0 }
     );
@@ -149,16 +149,14 @@ export class BattleScene extends Phaser.Scene {
     this.ensureActorTextures();
     this.createKenneyMap();
     this.createHeroAnims();
-    if (this.textures.exists("warrior_sheet")) this.playerBaseScale = 1;
+    if (this.textures.exists("swordman")) this.playerBaseScale = 1;
     const pad = 12 * this.playerBaseScale + 20;
     const heroStartX = pad;
     const heroStartY = this.mapH > 0 ? this.mapH * 0.6 : height * 0.6;
     this.heroStartX = heroStartX;
     this.laneY = heroStartY;
-    const heroKey = this.textures.exists("warrior_sheet")
-      ? "warrior_sheet"
-      : "player";
-    const heroFrame = heroKey === "warrior_sheet" ? 0 : undefined;
+    const heroKey = this.textures.exists("swordman") ? "swordman" : "player";
+    const heroFrame = heroKey === "swordman" ? 0 : undefined;
     this.playerCircle = this.add.sprite(
       heroStartX,
       heroStartY,
@@ -303,7 +301,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private createHeroAnims() {
-    if (this.textures.exists("warrior_sheet")) {
+    if (this.textures.exists("swordman")) {
       if (this.anims.exists("hero_idle_down")) return;
       const range = (start: number, count: number) =>
         Array.from({ length: count }, (_, i) => start + i);
@@ -312,7 +310,7 @@ export class BattleScene extends Phaser.Scene {
       const attack1 = range(176, 8);
       const attack2 = range(80, 6);
       const attack3 = range(198, 10);
-      const tex = this.textures.get("warrior_sheet");
+      const tex = this.textures.get("swordman");
       const src: any = tex.getSourceImage();
       const cols = Math.max(1, Math.floor((src?.width ?? 0) / 80));
       const rows = Math.max(1, Math.floor((src?.height ?? 0) / 64));
@@ -331,7 +329,7 @@ export class BattleScene extends Phaser.Scene {
       ) => {
         this.anims.create({
           key,
-          frames: frames.map((frame) => ({ key: "warrior_sheet", frame })),
+          frames: frames.map((frame) => ({ key: "swordman", frame })),
           frameRate,
           repeat,
         });
@@ -356,7 +354,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateHeroAnim(vx: number, vy: number) {
-    if (!this.textures.exists("warrior_sheet")) return;
+    if (!this.textures.exists("swordman")) return;
     if (this.isDefeated) return;
     if (
       this.attackAnimMs > 0 &&
@@ -1316,7 +1314,7 @@ export class BattleScene extends Phaser.Scene {
     const hasAttack1 = this.anims.exists("hero_attack1");
     const hasAttack2 = this.anims.exists("hero_attack2");
     if (
-      this.textures.exists("warrior_sheet") &&
+      this.textures.exists("swordman") &&
       (hasAttack0 || hasAttack1 || hasAttack2)
     ) {
       const choices = [
@@ -1925,7 +1923,7 @@ export class BattleScene extends Phaser.Scene {
     persistSave(this.save);
     this.isDefeated = true;
     const hasAnim =
-      this.textures.exists("warrior_sheet") && this.anims.exists("hero_defeat");
+      this.textures.exists("swordman") && this.anims.exists("hero_defeat");
     const show = () => {
       if (this.overlay) return;
       const { width, height } = this.scale;

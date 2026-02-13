@@ -125,6 +125,7 @@ function convertOne(relTmxPath) {
 
 const targets = [
   "public/assets/map/town/town.tmx",
+  "public/assets/map/dungeon1/dungeon1.tmx",
 ];
 
 for (const t of targets) {

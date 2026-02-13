@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="100" height="60" tilewidth="16" tileheight="16" infinite="0" nextlayerid="6" nextobjectid="1">
+ <tileset firstgid="1" name="Roguelike" tilewidth="16" tileheight="16" spacing="1" tilecount="1767" columns="57">
+  <image source="town.png" width="968" height="526"/>
+ </tileset>
+ <tileset firstgid="1768" name="platform1" tilewidth="192" tileheight="64" tilecount="1" columns="1">
+  <image source="platform1.png" width="192" height="64"/>
+ </tileset>
+ <layer id="1" name="root" width="100" height="60">
+  <data encoding="base64" compression="zlib">
+   eJzt1MGNgkAUBuARjMmevFqCXViD28Mmq1ZhsnqxAGNltrBl7BAgRhTXIeDBfIcvA7yfyTAPOIYQjgAAAAAAAAAAAAAAwKBC1k8G4JX8l4B3dB71l0+dawjL6l99qtayykNYN2zyS77IzeK4iLbx3s+sPK4V9Xl+8TG+Pn8Hk/iMoWU/2663acvX/djF/fvKS/txmf9u9GNR9bEYD3f6UWenjVrTT5aWrd/flOyj/Hl0u45nv5Oh+0Ga30m32r36f/nU+ftYY5e1PZPtkkndHwAAAAAAAABe5w/ll6nO
+  </data>
+ </layer>
+</map>

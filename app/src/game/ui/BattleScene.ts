@@ -672,7 +672,8 @@ export class BattleScene extends Phaser.Scene {
         `受伤：${Math.floor(dmg)}${blocked ? "（格挡）" : ""}`
       );
       if (e.kind === "pusher" || e.kind === "pusher_elite") {
-        const push = e.kind === "pusher_elite" ? 20 : 8;
+        const basePush = 14;
+        const push = e.kind === "pusher_elite" ? basePush * 3 : basePush;
         const nx = Math.max(this.heroStartX, this.playerCircle.x - push);
         if (nx !== this.playerCircle.x) {
           this.playerCircle.setPosition(nx, this.laneY);
@@ -1128,7 +1129,9 @@ export class BattleScene extends Phaser.Scene {
     const { width } = this.scale;
     const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
-    const endX = boundW - pad - 20;
+    const worldRight = boundW - pad - 20;
+    const pushDist = boundW * 0.25;
+    const endX = Math.min(worldRight, this.playerCircle.x + pushDist);
 
     this.dashLockMs = Math.max(this.dashLockMs, 1000);
     for (let i = 0; i < this.activeCooldownMs.length; i++) {
@@ -1188,24 +1191,24 @@ export class BattleScene extends Phaser.Scene {
         `${source}：命中${hit.length} 伤害${Math.floor(total)}`
       );
       this.applyLifeSteal(derived, total * 0.1, source);
-      for (const e of hit) {
-        if (e.hp <= 0) this.killEnemy(e);
-      }
-      // 推至最右侧堆积（不离场、不眩晕）
-      const worldRight = (this.mapW > 0 ? this.mapW : this.scale.width) - 24;
-      const rightEdge = worldRight;
+      const worldW = this.mapW > 0 ? this.mapW : this.scale.width;
+      const pushDist = worldW * 0.25;
+      const worldRight = worldW - 24;
       for (const e of hit) {
         if (!e.sprite.active) continue;
+        const targetX = Math.min(worldRight, e.sprite.x + pushDist);
         this.tweens.add({
           targets: [e.sprite, e.hpBarBg, e.hpBarFill],
-          x: rightEdge,
+          x: targetX,
           duration: 380,
           ease: "Cubic.easeIn",
           onComplete: () => {
-            // 保持在右侧边缘，立即恢复正常逻辑
             e.attackCooldownMs = this.rng.int(300, 900);
           },
         });
+      }
+      for (const e of hit) {
+        if (e.hp <= 0) this.killEnemy(e);
       }
     }
   }
@@ -1956,6 +1959,39 @@ export class BattleScene extends Phaser.Scene {
         color: "#e2e8f0",
       })
       .setOrigin(0.5, 0.5);
+    const tabRole = this.add
+      .text(width * 0.5 - 320, height * 0.5 - 150, "角色", {
+        fontFamily: "system-ui",
+        fontSize: "14px",
+        color: "#93c5fd",
+        backgroundColor: "#0f172a",
+        padding: { left: 10, right: 10, top: 6, bottom: 6 },
+      })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true });
+    const tabSkills = this.add
+      .text(width * 0.5 - 250, height * 0.5 - 150, "技能", {
+        fontFamily: "system-ui",
+        fontSize: "14px",
+        color: "#e2e8f0",
+        backgroundColor: "#1e293b",
+        padding: { left: 10, right: 10, top: 6, bottom: 6 },
+      })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true });
+    tabSkills.on("pointerdown", () => {
+      this.clearOverlay();
+      this.openSkillsOverlay();
+    });
+    const roleTabBorder = this.add.rectangle(
+      tabRole.x + tabRole.width / 2,
+      tabRole.y,
+      tabRole.width + 8,
+      tabRole.height + 8,
+      0x000000,
+      0
+    );
+    roleTabBorder.setStrokeStyle(1, 0x93c5fd, 1);
     const closeBtn = this.add
       .text(width * 0.5 + 350, height * 0.5 - 150, "关闭", {
         fontFamily: "system-ui",
@@ -2091,13 +2127,29 @@ export class BattleScene extends Phaser.Scene {
       if (!isGearMax) {
         enhanceBtn.setVisible(true);
         peakBtn.setVisible(false);
-        costText.setText(`升级下一装备等级需要金币：${calcSingleGold(nextLv)}`);
+        const gearCost = calcSingleGold(nextLv);
+        costText.setText(`升级下一装备等级需要金币：${gearCost}`);
         costText.setY(belowPreviewY + 36);
+        const canEnhance = this.save.gold >= gearCost;
+        enhanceBtn.setAlpha(canEnhance ? 1 : 0.6);
+        if (canEnhance) {
+          enhanceBtn.setInteractive({ useHandCursor: true });
+        } else {
+          enhanceBtn.disableInteractive();
+        }
       } else {
         enhanceBtn.setVisible(false);
         peakBtn.setVisible(true);
-        costText.setText(`升级下一巅峰等级需要金币：${calcPeakGold(nextPeak)}`);
+        const peakCost = calcPeakGold(nextPeak);
+        costText.setText(`升级下一巅峰等级需要金币：${peakCost}`);
         costText.setY(belowPreviewY + 36);
+        const canPeak = this.save.gold >= peakCost;
+        peakBtn.setAlpha(canPeak ? 1 : 0.6);
+        if (canPeak) {
+          peakBtn.setInteractive({ useHandCursor: true });
+        } else {
+          peakBtn.disableInteractive();
+        }
       }
     };
     refresh();
@@ -2105,6 +2157,9 @@ export class BattleScene extends Phaser.Scene {
       bg,
       panel,
       title,
+      tabRole,
+      roleTabBorder,
+      tabSkills,
       closeBtn,
       info,
       statsText,
@@ -2166,11 +2221,20 @@ export class BattleScene extends Phaser.Scene {
         fontFamily: "system-ui",
         fontSize: "14px",
         color: "#93c5fd",
-        backgroundColor: "#1e293b",
+        backgroundColor: "#0f172a",
         padding: { left: 10, right: 10, top: 6, bottom: 6 },
       })
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true });
+    const skillsTabBorder = this.add.rectangle(
+      tabSkills.x + tabSkills.width / 2,
+      tabSkills.y,
+      tabSkills.width + 8,
+      tabSkills.height + 8,
+      0x000000,
+      0
+    );
+    skillsTabBorder.setStrokeStyle(1, 0x93c5fd, 1);
 
     const closeBtn = this.add
       .text(width * 0.5 + 400, height * 0.5 - 220, "关闭", {
@@ -2429,6 +2493,7 @@ export class BattleScene extends Phaser.Scene {
       title,
       tabEquip,
       tabSkills,
+      skillsTabBorder,
       closeBtn,
       points,
       equipInfo,
@@ -2596,7 +2661,7 @@ export class BattleScene extends Phaser.Scene {
     t.setOrigin(0.5, 0.5);
     this.tweens.add({
       targets: t,
-      y: y - 26,
+      y: y - 52,
       alpha: 0,
       duration: 720,
       ease: "Cubic.easeOut",

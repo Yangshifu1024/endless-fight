@@ -2820,11 +2820,12 @@ export class BattleScene extends Phaser.Scene {
       strokeThickness: 2,
     });
     t.setOrigin(0.5, 0.5);
+    t.setDepth(100);
     this.tweens.add({
       targets: t,
-      y: y - 52,
+      y: y - 82,
       alpha: 0,
-      duration: 720,
+      duration: 1000,
       ease: "Cubic.easeOut",
       onComplete: () => t.destroy(),
     });

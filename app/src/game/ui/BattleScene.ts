@@ -2090,9 +2090,7 @@ export class BattleScene extends Phaser.Scene {
             return `荆棘 ${th.toFixed(1)}%${tag}`;
           })(),
           derived.recoveryPct > 0
-            ? `恢复 ${(derived.recoveryPct * 100).toFixed(
-                1
-              )}%（每秒，10秒合计）`
+            ? `恢复 ${Math.ceil(derived.recoveryPct * 100)}%（每秒，10秒合计）`
             : "",
         ]
           .filter(Boolean)
@@ -2622,7 +2620,7 @@ export class BattleScene extends Phaser.Scene {
           return `荆棘：${thornsPct.toFixed(1)}%${tag}`;
         })(),
         derived.recoveryPct > 0
-          ? `恢复：${(derived.recoveryPct * 100).toFixed(1)}%（每秒，10秒合计）`
+          ? `恢复：${Math.ceil(derived.recoveryPct * 100)}%（每秒，10秒合计）`
           : "",
       ]
         .filter(Boolean)

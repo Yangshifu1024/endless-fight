@@ -1469,7 +1469,7 @@ export class BattleScene extends Phaser.Scene {
     this.spawnFloatText(
       this.playerCircle.x,
       this.playerCircle.y - 24,
-      `+${actual}`,
+      `+${Math.ceil(actual)}`,
       "#86efac"
     );
     this.pushCombatLog(`吸血：+${actual}（${source}）`);

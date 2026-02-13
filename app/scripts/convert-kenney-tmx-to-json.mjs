@@ -24,22 +24,41 @@ function parseTmx(tmx) {
   const renderorder = extractAttr(mapTag, "renderorder") ?? "right-down";
   const version = extractAttr(mapTag, "version") ?? "1.0";
 
-  const tilesetTag = /<tileset\b[^>]*>[\s\S]*?<\/tileset>/.exec(tmx)?.[0];
-  if (!tilesetTag) throw new Error("TMX: missing <tileset>");
-  const tilesetOpen = /<tileset\b[^>]*>/.exec(tilesetTag)?.[0];
-  if (!tilesetOpen) throw new Error("TMX: tileset open tag missing");
-  const firstgid = Number(extractAttr(tilesetOpen, "firstgid") ?? "1");
-  const tilesetName = extractAttr(tilesetOpen, "name") ?? "Tileset";
-  const spacing = Number(extractAttr(tilesetOpen, "spacing") ?? "0");
-  const imageTag = /<image\b[^>]*\/>/.exec(tilesetTag)?.[0];
-  if (!imageTag) throw new Error("TMX: tileset image tag missing");
-  const image = extractAttr(imageTag, "source");
-  const imagewidth = Number(extractAttr(imageTag, "width"));
-  const imageheight = Number(extractAttr(imageTag, "height"));
+  const tilesets = [];
+  const tilesetRe = /<tileset\b[^>]*>[\s\S]*?<\/tileset>/g;
+  for (const tilesetBlock of tmx.matchAll(tilesetRe)) {
+    const tilesetXml = tilesetBlock[0];
+    const tilesetOpen = /<tileset\b[^>]*>/.exec(tilesetXml)?.[0];
+    if (!tilesetOpen) continue;
+    const firstgid = Number(extractAttr(tilesetOpen, "firstgid") ?? "1");
+    const tilesetName = extractAttr(tilesetOpen, "name") ?? "Tileset";
+    const spacing = Number(extractAttr(tilesetOpen, "spacing") ?? "0");
+    const imageTag = /<image\b[^>]*\/>/.exec(tilesetXml)?.[0];
+    if (!imageTag) throw new Error(`TMX: tileset "${tilesetName}" image tag missing`);
+    const image = extractAttr(imageTag, "source");
+    const imagewidth = Number(extractAttr(imageTag, "width"));
+    const imageheight = Number(extractAttr(imageTag, "height"));
 
-  const columns = Math.floor((imagewidth + spacing) / (tilewidth + spacing));
-  const rows = Math.floor((imageheight + spacing) / (tileheight + spacing));
-  const tilecount = columns * rows;
+    const columns = Math.floor((imagewidth + spacing) / (tilewidth + spacing));
+    const rows = Math.floor((imageheight + spacing) / (tileheight + spacing));
+    const tilecount = columns * rows;
+
+    tilesets.push({
+      columns,
+      firstgid,
+      image,
+      imageheight,
+      imagewidth,
+      margin: 0,
+      name: tilesetName,
+      spacing,
+      tilecount,
+      tileheight,
+      tilewidth,
+    });
+  }
+
+  if (tilesets.length === 0) throw new Error("TMX: no tilesets found");
 
   const layers = [];
   const layerRe = /<layer\b[^>]*>[\s\S]*?<\/layer>/g;
@@ -92,21 +111,7 @@ function parseTmx(tmx) {
     renderorder,
     tiledversion: "1.0",
     tileheight,
-    tilesets: [
-      {
-        columns,
-        firstgid,
-        image,
-        imageheight,
-        imagewidth,
-        margin: 0,
-        name: tilesetName,
-        spacing,
-        tilecount,
-        tileheight,
-        tilewidth,
-      },
-    ],
+    tilesets,
     tilewidth,
     type: "map",
     version,

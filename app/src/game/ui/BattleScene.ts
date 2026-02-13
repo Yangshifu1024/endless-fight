@@ -139,6 +139,12 @@ export class BattleScene extends Phaser.Scene {
     );
     this.load.image("town_tiles", "/assets/map/town/town.png");
     this.load.tilemapTiledJSON("town_map", "/assets/map/town/town.json");
+    this.load.image("dungeon1_tiles", "/assets/map/dungeon1/dungeon1.png");
+    this.load.image("dungeon1_platform", "/assets/map/dungeon1/platform1.png");
+    this.load.tilemapTiledJSON(
+      "dungeon1_map",
+      "/assets/map/dungeon1/dungeon1.json"
+    );
   }
 
   create() {
@@ -147,7 +153,12 @@ export class BattleScene extends Phaser.Scene {
 
     const { width, height } = this.scale;
     this.ensureActorTextures();
-    this.createKenneyMap();
+    const stageMod = this.save.stage % 10;
+    if (stageMod === 0 || stageMod === 5) {
+      this.createDungeon1Map();
+    } else {
+      this.createTownMap();
+    }
     this.createHeroAnims();
     if (this.textures.exists("swordman")) this.playerBaseScale = 1;
     const pad = 12 * this.playerBaseScale + 20;
@@ -267,7 +278,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.skillLog.length > 10) this.skillLog = this.skillLog.slice(0, 10);
   }
 
-  private createKenneyMap() {
+  private createTownMap() {
     if (!this.cache.tilemap.exists("town_map")) return;
     if (!this.textures.exists("town_tiles")) return;
     const map = this.make.tilemap({ key: "town_map" });
@@ -290,6 +301,44 @@ export class BattleScene extends Phaser.Scene {
     ];
     for (const def of layerDefs) {
       const layer = map.createLayer(def.name, tileset, 0, 0);
+      if (!layer) continue;
+      layer.setDepth(def.depth);
+    }
+
+    this.mapW = map.widthInPixels;
+    this.mapH = map.heightInPixels;
+    if (this.mapW > 0 && this.mapH > 0)
+      this.cameras.main.setBounds(0, 0, this.mapW, this.mapH);
+  }
+
+  private createDungeon1Map() {
+    if (!this.cache.tilemap.exists("dungeon1_map")) return;
+    if (!this.textures.exists("dungeon1_tiles")) return;
+    const map = this.make.tilemap({ key: "dungeon1_map" });
+    const tileset1 = map.addTilesetImage(
+      "Roguelike",
+      "dungeon1_tiles",
+      16,
+      16,
+      0,
+      1
+    );
+    const tileset2 = map.addTilesetImage(
+      "platform1",
+      "dungeon1_platform",
+      192,
+      64,
+      0,
+      1
+    );
+    if (!tileset1) return;
+
+    const layerDefs: Array<{ name: string; depth: number }> = [
+      { name: "root", depth: 0 },
+    ];
+    const tilesets = tileset2 ? [tileset1, tileset2] : [tileset1];
+    for (const def of layerDefs) {
+      const layer = map.createLayer(def.name, tilesets, 0, 0);
       if (!layer) continue;
       layer.setDepth(def.depth);
     }

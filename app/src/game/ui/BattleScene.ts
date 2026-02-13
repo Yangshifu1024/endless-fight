@@ -56,6 +56,8 @@ type Enemy = {
   jumpOffsetY?: number;
   expelled?: boolean;
   expelledMs?: number;
+  stunMs?: number;
+  stunFx?: Phaser.GameObjects.Container;
 };
 
 export class BattleScene extends Phaser.Scene {
@@ -561,6 +563,22 @@ export class BattleScene extends Phaser.Scene {
         }
         continue;
       }
+      if ((e.stunMs ?? 0) > 0) {
+        e.stunMs = Math.max(0, (e.stunMs ?? 0) - dt);
+        e.attackCooldownMs = Math.max(e.attackCooldownMs, e.stunMs ?? 0);
+        if (e.stunFx) {
+          e.stunFx.setPosition(e.sprite.x, e.sprite.y - 24);
+          if (e.stunMs <= 0) {
+            const targets = [e.stunFx, ...(e.stunFx.list ?? [])];
+            this.tweens.killTweensOf(targets);
+            e.stunFx.destroy();
+            e.stunFx = undefined;
+          }
+        }
+        e.sprite.y = this.laneY - (e.jumpOffsetY ?? 0);
+        this.updateEnemyHpBar(e);
+        continue;
+      }
       const step = e.speed * (dt / 1000);
       const dx = this.playerCircle.x - e.sprite.x;
       const stopDist = 24;
@@ -669,7 +687,7 @@ export class BattleScene extends Phaser.Scene {
       }
       this.playerHp -= dmg;
       this.pushDefenseLog(
-        `受伤：${Math.floor(dmg)}${blocked ? "（格挡）" : ""}`
+        `受伤：${Math.ceil(dmg)}${blocked ? "（格挡）" : ""}`
       );
       if (e.kind === "pusher" || e.kind === "pusher_elite") {
         const basePush = 14;
@@ -699,7 +717,7 @@ export class BattleScene extends Phaser.Scene {
       this.spawnFloatText(
         this.playerCircle.x,
         this.playerCircle.y - 18,
-        `-${Math.floor(dmg)}`,
+        `-${Math.ceil(dmg)}`,
         blocked ? "#93c5fd" : "#fca5a5"
       );
       // 触发型荆棘：不再反伤，仅格挡减伤
@@ -739,10 +757,10 @@ export class BattleScene extends Phaser.Scene {
     this.spawnFloatText(
       best.sprite.x,
       best.sprite.y - 16,
-      `${crit ? "暴 " : ""}${Math.floor(dmg)}`,
+      `${crit ? "暴 " : ""}${Math.ceil(dmg)}`,
       crit ? "#fde68a" : "#e2e8f0"
     );
-    this.pushCombatLog(`普攻：${Math.floor(dmg)}${crit ? "（暴击）" : ""}`);
+    this.pushCombatLog(`普攻：${Math.ceil(dmg)}${crit ? "（暴击）" : ""}`);
     this.applyLifeSteal(derived, dmg, "普攻");
     if (best.hp <= 0) {
       this.killEnemy(best);
@@ -892,12 +910,12 @@ export class BattleScene extends Phaser.Scene {
       this.spawnFloatText(
         e.sprite.x,
         e.sprite.y - 16,
-        `${Math.floor(dmg)}`,
+        `${Math.ceil(dmg)}`,
         "#93c5fd"
       );
       this.applyLifeSteal(derived, dmg * 0.35, "旋风斩");
     }
-    this.pushSkillLog(`旋风斩：命中${hit.length} 伤害${Math.floor(total)}`);
+    this.pushSkillLog(`旋风斩：命中${hit.length} 伤害${Math.ceil(total)}`);
     for (const e of [...hit]) {
       if (e.hp <= 0) this.killEnemy(e);
     }
@@ -1090,7 +1108,7 @@ export class BattleScene extends Phaser.Scene {
       this.spawnFloatText(
         e.sprite.x,
         e.sprite.y - 16,
-        `${Math.floor(dmg)}`,
+        `${Math.ceil(dmg)}`,
         "#fbbf24"
       );
       this.applyLifeSteal(derived, dmg * 0.35, "雷霆一击");
@@ -1108,7 +1126,7 @@ export class BattleScene extends Phaser.Scene {
         });
       }
     }
-    this.pushSkillLog(`雷霆一击：命中${hit.length} 伤害${Math.floor(total)}`);
+    this.pushSkillLog(`雷霆一击：命中${hit.length} 伤害${Math.ceil(total)}`);
     for (const e of [...hit]) {
       if (e.hp <= 0) this.killEnemy(e);
     }
@@ -1130,7 +1148,7 @@ export class BattleScene extends Phaser.Scene {
     const boundW = this.mapW > 0 ? this.mapW : width;
     const pad = 10 * this.playerBaseScale;
     const worldRight = boundW - pad - 20;
-    const pushDist = boundW * 0.25;
+    const pushDist = boundW * 0.1;
     const endX = Math.min(worldRight, this.playerCircle.x + pushDist);
 
     this.dashLockMs = Math.max(this.dashLockMs, 1000);
@@ -1155,7 +1173,7 @@ export class BattleScene extends Phaser.Scene {
       duration: 300,
       ease: "Cubic.easeIn",
       onComplete: () => {
-        this.dealChargeDamage(derived, p.coef, "冲撞");
+        this.dealChargeDamage(derived, p, "冲撞");
         // 相机已跟随，无需额外处理
       },
     });
@@ -1163,11 +1181,11 @@ export class BattleScene extends Phaser.Scene {
 
   private dealChargeDamage(
     derived: ReturnType<typeof computeDerivedPlayerStats>,
-    coef: number,
+    p: ReturnType<typeof chargeParams>,
     source: string
   ) {
     if (this.enemies.length <= 0) return;
-    const raw = derived.atk * coef;
+    const raw = derived.atk * p.coef;
     let total = 0;
     const hit: Enemy[] = [];
 
@@ -1180,19 +1198,17 @@ export class BattleScene extends Phaser.Scene {
       this.spawnFloatText(
         e.sprite.x,
         e.sprite.y - 16,
-        `${Math.floor(dmg)}`,
+        `${Math.ceil(dmg)}`,
         "#fde68a"
       );
       hit.push(e);
     }
 
     if (hit.length > 0) {
-      this.pushSkillLog(
-        `${source}：命中${hit.length} 伤害${Math.floor(total)}`
-      );
+      this.pushSkillLog(`${source}：命中${hit.length} 伤害${Math.ceil(total)}`);
       this.applyLifeSteal(derived, total * 0.1, source);
       const worldW = this.mapW > 0 ? this.mapW : this.scale.width;
-      const pushDist = worldW * 0.25;
+      const pushDist = worldW * 0.1;
       const worldRight = worldW - 24;
       for (const e of hit) {
         if (!e.sprite.active) continue;
@@ -1203,7 +1219,10 @@ export class BattleScene extends Phaser.Scene {
           duration: 380,
           ease: "Cubic.easeIn",
           onComplete: () => {
+            if (!e.sprite.active || e.hp <= 0) return;
             e.attackCooldownMs = this.rng.int(300, 900);
+            e.stunMs = Math.max(e.stunMs ?? 0, p.stunMs ?? 0);
+            this.applyStunFx(e, p.stunMs ?? 0);
           },
         });
       }
@@ -1211,6 +1230,46 @@ export class BattleScene extends Phaser.Scene {
         if (e.hp <= 0) this.killEnemy(e);
       }
     }
+  }
+
+  private applyStunFx(e: Enemy, durationMs: number) {
+    if (!e.sprite.active || e.hp <= 0) return;
+    if (e.stunFx) {
+      const targets = [e.stunFx, ...(e.stunFx.list ?? [])];
+      this.tweens.killTweensOf(targets);
+      e.stunFx.destroy();
+      e.stunFx = undefined;
+    }
+    const group = this.add.container(e.sprite.x, e.sprite.y - 24);
+    const radius = 14;
+    const count = 5;
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2;
+      const star = this.add.circle(
+        Math.cos(ang) * radius,
+        Math.sin(ang) * radius,
+        3,
+        0xfbbf24,
+        1
+      );
+      group.add(star);
+      this.tweens.add({
+        targets: star,
+        alpha: 0.6,
+        duration: 420,
+        yoyo: true,
+        repeat: Math.max(0, Math.ceil(durationMs / 420)),
+        ease: "Sine.easeInOut",
+      });
+    }
+    this.tweens.add({
+      targets: group,
+      angle: 360,
+      duration: 1200,
+      repeat: Math.max(0, Math.ceil(durationMs / 1200)),
+      ease: "Linear",
+    });
+    e.stunFx = group;
   }
 
   private findNearestEnemy() {
@@ -1326,6 +1385,13 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private killEnemy(enemy: Enemy) {
+    this.tweens.killTweensOf([enemy.sprite, enemy.hpBarBg, enemy.hpBarFill]);
+    if (enemy.stunFx) {
+      const targets = [enemy.stunFx, ...(enemy.stunFx.list ?? [])];
+      this.tweens.killTweensOf(targets);
+      enemy.stunFx.destroy();
+      enemy.stunFx = undefined;
+    }
     const ex = enemy.sprite.x;
     const ey = enemy.sprite.y;
     enemy.hpBarBg.setDepth(25);
@@ -2090,7 +2156,9 @@ export class BattleScene extends Phaser.Scene {
             return `荆棘 ${th.toFixed(1)}%${tag}`;
           })(),
           derived.recoveryPct > 0
-            ? `恢复 ${Math.ceil(derived.recoveryPct * 100)}%（每秒，10秒合计）`
+            ? `恢复 ${(derived.recoveryPct * 100).toFixed(
+                1
+              )}%（每秒，10秒合计）`
             : "",
         ]
           .filter(Boolean)
@@ -2430,6 +2498,10 @@ export class BattleScene extends Phaser.Scene {
             `倍率：${Math.round(p2.coef * 100)}% ATK (x2) (+${Math.round(
               (p2.coef - p1.coef) * 100
             )}%)`,
+            `眩晕：${(p2.stunMs / 1000).toFixed(2)}s (+${(
+              (p2.stunMs - p1.stunMs) /
+              1000
+            ).toFixed(2)}s)`,
           ];
         } else if (selected === "thunder") {
           const p1 = thunderParams(curLv);
@@ -2620,7 +2692,7 @@ export class BattleScene extends Phaser.Scene {
           return `荆棘：${thornsPct.toFixed(1)}%${tag}`;
         })(),
         derived.recoveryPct > 0
-          ? `恢复：${Math.ceil(derived.recoveryPct * 100)}%（每秒，10秒合计）`
+          ? `恢复：${(derived.recoveryPct * 100).toFixed(1)}%（每秒，10秒合计）`
           : "",
       ]
         .filter(Boolean)

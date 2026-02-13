@@ -26,7 +26,8 @@ export function whirlwindParams(lv: number, _branch: string | undefined) {
 export function chargeParams(lv: number, _branch: string | undefined) {
   const scale = 2.0;
   const coef = 2.0 + 0.05 * Math.max(0, lv - 1);
-  return { scale, coef };
+  const stunMs = 3000 + 50 * Math.max(0, lv - 1);
+  return { scale, coef, stunMs };
 }
 
 export function thunderParams(lv: number) {
@@ -67,6 +68,7 @@ export function skillPreviewLines(save: PlayerSave, id: SkillId) {
   } else if (id === "charge") {
     const p = chargeParams(lv, br);
     lines.push(`倍率：${Math.round(p.coef * 100)}% ATK (x2)`);
+    lines.push(`眩晕：${formatSeconds(p.stunMs)}`);
   } else if (id === "thunder") {
     const p = thunderParams(lv);
     lines.push(`范围：${Math.floor(p.radius)}`);
